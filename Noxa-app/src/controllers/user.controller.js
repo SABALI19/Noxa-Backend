@@ -55,10 +55,52 @@ const loginUser = async (req, res) => {
         });
 
         //compare passwords
-        
-    } catch(error) {
+        const isMatch = await user.comparePassword(password);
+        if(!isMatch) return res.status(400).json({
+          message: "invalid credentials"
+        })
 
+        res.status(200).json({
+          message: "user logged in",
+          user: {
+            id: user._id,
+            email: user.email,
+            username: user.username
+          }
+        })
+    } catch(error) {
+      res.status(500).json({
+        message: "Internal server error"
+      })
     }
 }
+const logoutUser = async (req, res) => {
+  try {
+    const {email} = req.body;
+
+    const user = await User.findOne({
+      email
+    });
+
+    if (!user) return res.status(404).json({
+      message: "User not found"
+    });
+
+    res.status(200).json({
+      message: "logout successful"
+    });
+
+
+  } catch (error) {
+    res.status(500).json({
+      message: "Internal server error", error
+    });
+    
+  }
+}
 // export this to be able to use in another file
-export { registerUser };
+export { 
+  registerUser,
+  loginUser,
+  logoutUser
+ };
