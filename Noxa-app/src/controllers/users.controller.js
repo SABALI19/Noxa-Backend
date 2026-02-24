@@ -55,11 +55,20 @@ const issueTokensForUser = async (user) => {
 };
 
 const normalizeSignupPayload = (payload) => {
-  assertRequired(payload, ["username", "email", "password"]);
+  assertRequired(payload, ["email", "password"]);
 
-  const username = String(payload.username).toLowerCase().trim();
+  const usernameInput = payload.username ?? payload.name;
+  if (!usernameInput) {
+    throw createError(400, "username or name is required");
+  }
+
+  const username = String(usernameInput).toLowerCase().trim().replace(/\s+/g, "_");
   const email = String(payload.email).toLowerCase().trim();
   const password = String(payload.password);
+  const confirmPassword =
+    payload.confirmPassword === undefined || payload.confirmPassword === null
+      ? null
+      : String(payload.confirmPassword);
 
   if (username.length < 3 || username.length > 30) {
     throw createError(400, "username must be between 3 and 30 characters");
@@ -75,6 +84,10 @@ const normalizeSignupPayload = (payload) => {
 
   if (password.length < 8) {
     throw createError(400, "password must be at least 8 characters");
+  }
+
+  if (confirmPassword !== null && password !== confirmPassword) {
+    throw createError(400, "password and confirmPassword must match");
   }
 
   return { username, email, password };

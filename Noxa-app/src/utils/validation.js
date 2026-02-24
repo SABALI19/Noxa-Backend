@@ -2,6 +2,10 @@ import mongoose from "mongoose";
 import { createError } from "./http.js";
 
 export const assertRequired = (payload, requiredFields) => {
+  if (!payload || typeof payload !== "object") {
+    throw createError(400, "Request body is required");
+  }
+
   for (const field of requiredFields) {
     if (payload[field] === undefined || payload[field] === null || payload[field] === "") {
       throw createError(400, `${field} is required`);
