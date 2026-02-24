@@ -1,17 +1,44 @@
-import express from 'express';
+import cors from "cors";
+import express from "express";
 
+import goalsRouter from "./routes/goals.route.js";
+import notesRouter from "./routes/notes.route.js";
+import remindersRouter from "./routes/reminders.route.js";
+import tasksRouter from "./routes/tasks.route.js";
+import trackingRouter from "./routes/tracking.route.js";
+import usersRouter from "./routes/users.route.js";
 
-const app = express(); // Create an Express app
-// gives the server the ability to to pass response in json 
-app.use(express.json ());
+const app = express();
 
-// Routes import
-import userRouter from './routes/user.route.js'; //route import
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
+app.use(cors({
+  origin: CLIENT_URL,
+  credentials: true
+}));
+app.use(express.json());
 
-//routes declaration or specification
-app.use("/api/v1/users", userRouter);
+app.use("/api/v1/users", usersRouter);
+app.use("/api/v1/tasks", tasksRouter);
+app.use("/api/v1/reminders", remindersRouter);
+app.use("/api/v1/goals", goalsRouter);
+app.use("/api/v1/notes", notesRouter);
+app.use("/api/v1/tracking", trackingRouter);
 
-//example route: http://localhost:4000/api/v1/users/register 
-  
+app.use((_req, res) => {
+  res.status(404).json({ message: "Route not found" });
+});
+
+app.use((error, _req, res, _next) => {
+  const statusCode = error.statusCode || 500;
+
+  if (statusCode >= 500) {
+    console.error(error);
+  }
+
+  res.status(statusCode).json({
+    message: statusCode >= 500 ? "Internal server error" : error.message,
+  });
+});
+
 export default app;
