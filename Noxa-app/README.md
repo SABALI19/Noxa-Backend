@@ -60,3 +60,56 @@ Refresh token:
   "refreshToken": "paste_refresh_token_from_login_response"
 }
 ```
+
+## AI Endpoint (Anthropic)
+
+Install package:
+
+```bash
+npm install @anthropic-ai/sdk
+```
+
+Set in `.env`:
+
+```env
+ANTHROPIC_API_KEY=your_anthropic_api_key
+```
+
+Route:
+
+- `POST /api/ai` (protected, requires `Authorization: Bearer <accessToken>`)
+
+Example request:
+
+```bash
+curl -X POST "http://localhost:4000/api/ai" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1000,
+    "system": "You are a helpful assistant.",
+    "messages": [
+      { "role": "user", "content": "Write a short welcome message for Noxa users." }
+    ]
+  }'
+```
+
+Expected response shape (Anthropic JSON):
+
+```json
+{
+  "id": "msg_...",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-sonnet-4-20250514",
+  "content": [
+    { "type": "text", "text": "..." }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0
+  }
+}
+```
