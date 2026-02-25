@@ -1,3 +1,4 @@
+import "dotenv/config";
 import cors from "cors";
 import express from "express";
 
@@ -11,12 +12,35 @@ import usersRouter from "./routes/users.route.js";
 
 const app = express();
 
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const parseAllowedOrigins = () => {
+  const rawOrigins = process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || "http://localhost:5173";
+  return rawOrigins
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+};
 
-app.use(cors({
-  origin: CLIENT_URL,
-  credentials: true
-}));
+const allowedOrigins = parseAllowedOrigins();
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow server-to-server and same-origin requests without Origin header.
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 app.use("/api", aiRouter);

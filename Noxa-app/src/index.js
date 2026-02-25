@@ -1,13 +1,14 @@
-import dotenv from 'dotenv';
+import "dotenv/config";
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import connectDB from './config/database.js';
 import app from './app.js';
 
-dotenv.config({ path: './.env' });
-
 const PORT = process.env.PORT || 4000;
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || "http://localhost:5173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const startServer = async () => {
   try {
@@ -17,7 +18,7 @@ const startServer = async () => {
 
     const io = new Server(httpServer, {
       cors: {
-        origin: CLIENT_URL,
+        origin: ALLOWED_ORIGINS,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
         credentials: true
       }
