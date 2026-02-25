@@ -150,12 +150,12 @@ export const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = normalizeLoginPayload(req.body);
   const user = await User.findOne({ email });
   if (!user) {
-    throw createError(401, "Invalid credentials");
+    throw createError(404, "User does not exist");
   }
 
   const isPasswordValid = await user.comparePassword(password);
   if (!isPasswordValid) {
-    throw createError(401, "Invalid credentials");
+    throw createError(401, "Incorrect password");
   }
 
   const { accessToken, refreshToken } = await issueTokensForUser(user);
