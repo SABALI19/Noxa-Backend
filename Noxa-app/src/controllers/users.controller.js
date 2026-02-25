@@ -12,6 +12,7 @@ import { assertRequired } from "../utils/validation.js";
 
 const USERNAME_REGEX = /^[a-z0-9_]+$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_COMPLEXITY_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/;
 
 const isDuplicateKeyError = (error) => error?.code === 11000;
 const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
@@ -83,11 +84,18 @@ const normalizeSignupPayload = (payload) => {
   }
 
   if (password.length < 8) {
-    throw createError(400, "password must be at least 8 characters");
+    throw createError(400, "password must be at least 8 characters long");
+  }
+
+  if (!PASSWORD_COMPLEXITY_REGEX.test(password)) {
+    throw createError(
+      400,
+      "password must include at least one uppercase letter, one lowercase letter, and one number"
+    );
   }
 
   if (confirmPassword !== null && password !== confirmPassword) {
-    throw createError(400, "password and confirmPassword must match");
+    throw createError(400, "password confirmation does not match");
   }
 
   return { username, email, password };
