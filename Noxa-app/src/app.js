@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 
 import aiRouter from "./routes/ai.route.js";
+import emailsRouter from "./routes/emails.route.js";
 import goalsRouter from "./routes/goals.route.js";
 import notesRouter from "./routes/notes.route.js";
 import remindersRouter from "./routes/reminders.route.js";
@@ -44,6 +45,7 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 app.use("/api", aiRouter);
+app.use("/api/v1/emails", emailsRouter);
 app.use("/api/v1/users", usersRouter);
 app.use("/api/v1/tasks", tasksRouter);
 app.use("/api/v1/reminders", remindersRouter);
