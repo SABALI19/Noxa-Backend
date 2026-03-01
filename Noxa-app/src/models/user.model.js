@@ -32,6 +32,32 @@ const userSchema = new Schema(
       type: Date,
       default: null,
     },
+    pushSubscriptions: [
+      {
+        endpoint: {
+          type: String,
+          required: true,
+        },
+        expirationTime: {
+          type: Number,
+          default: null,
+        },
+        keys: {
+          p256dh: {
+            type: String,
+            required: true,
+          },
+          auth: {
+            type: String,
+            required: true,
+          },
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
   {
     timestamps: true,
@@ -55,6 +81,7 @@ userSchema.set("toJSON", {
     delete ret.password;
     delete ret.refreshTokenHash;
     delete ret.refreshTokenExpiresAt;
+    delete ret.pushSubscriptions;
     return ret;
   },
 });

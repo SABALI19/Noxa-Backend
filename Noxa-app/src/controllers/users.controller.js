@@ -9,6 +9,11 @@ import {
   verifyRefreshToken,
 } from "../utils/token.js";
 import { assertRequired } from "../utils/validation.js";
+import {
+  getPublicVapidKey,
+  removeUserPushSubscription,
+  upsertUserPushSubscription,
+} from "../utils/webPush.js";
 
 const USERNAME_REGEX = /^[a-z0-9_]+$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -230,4 +235,31 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
   }
 
   return sendItem(res, user.toJSON());
+});
+
+export const getPushPublicKey = asyncHandler(async (_req, res) => {
+  const publicKey = getPublicVapidKey();
+  if (!publicKey) {
+    throw createError(503, "Push notifications are not configured");
+  }
+
+  return sendItem(res, { publicKey });
+});
+
+export const subscribePushNotifications = asyncHandler(async (req, res) => {
+  assertRequired(req.body, ["subscription"]);
+
+  const subscription = await upsertUserPushSubscription(req.user.id, req.body.subscription);
+
+  return sendItem(res, {
+    subscribed: true,
+    endpoint: subscription.endpoint,
+  });
+});
+
+export const unsubscribePushNotifications = asyncHandler(async (req, res) => {
+  const endpoint = String(req.body?.endpoint || req.body?.subscription?.endpoint || "").trim();
+  await removeUserPushSubscription(req.user.id, endpoint || null);
+
+  return sendItem(res, { subscribed: false });
 });
