@@ -72,7 +72,7 @@ export const createTask = asyncHandler(async (req, res) => {
       id: String(task._id),
       title: task.title,
     },
-  });
+  }, { userId: req.user.id });
 
   return sendItem(res, task, 201);
 });
@@ -109,6 +109,21 @@ export const updateTask = asyncHandler(async (req, res) => {
     throw createError(404, "Task not found");
   }
 
+  emitNotification(
+    req,
+    {
+      eventId: `task_updated_${task._id}_${Date.now()}`,
+      notificationType: "task_updated",
+      itemType: "task",
+      item: {
+        id: String(task._id),
+        title: task.title,
+        status: task.status,
+      },
+    },
+    { userId: req.user.id }
+  );
+
   return sendItem(res, task);
 });
 
@@ -119,6 +134,21 @@ export const deleteTask = asyncHandler(async (req, res) => {
   if (!task) {
     throw createError(404, "Task not found");
   }
+
+  emitNotification(
+    req,
+    {
+      eventId: `task_deleted_${task._id}`,
+      notificationType: "task_deleted",
+      itemType: "task",
+      item: {
+        id: String(task._id),
+        title: task.title,
+        status: task.status,
+      },
+    },
+    { userId: req.user.id }
+  );
 
   return sendItem(res, task);
 });
