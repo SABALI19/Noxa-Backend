@@ -1,11 +1,13 @@
 import { Router } from "express";
 import {
+  forgotPassword,
   getPushPublicKey,
   getCurrentUser,
   loginUser,
   logoutUser,
   refreshAuthToken,
   registerUser,
+  resetPassword,
   subscribePushNotifications,
   unsubscribePushNotifications,
 } from "../controllers/users.controller.js";
@@ -16,6 +18,8 @@ const router = Router();
 router.post("/signup", registerUser);
 router.post("/register", registerUser);
 router.post("/login", loginUser);
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
 router.post("/refresh", refreshAuthToken);
 router.post("/logout", logoutUser);
 router.get("/push/public-key", getPushPublicKey);

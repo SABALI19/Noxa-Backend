@@ -32,6 +32,14 @@ const userSchema = new Schema(
       type: Date,
       default: null,
     },
+    passwordResetTokenHash: {
+      type: String,
+      default: null,
+    },
+    passwordResetExpiresAt: {
+      type: Date,
+      default: null,
+    },
     pushSubscriptions: [
       {
         endpoint: {
@@ -81,6 +89,8 @@ userSchema.set("toJSON", {
     delete ret.password;
     delete ret.refreshTokenHash;
     delete ret.refreshTokenExpiresAt;
+    delete ret.passwordResetTokenHash;
+    delete ret.passwordResetExpiresAt;
     delete ret.pushSubscriptions;
     return ret;
   },

@@ -14,10 +14,21 @@ import {
   removeUserPushSubscription,
   upsertUserPushSubscription,
 } from "../utils/webPush.js";
+import { sendAccountCreatedEmail } from "../utils/mailer.js";
 
 const USERNAME_REGEX = /^[a-z0-9_]+$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_COMPLEXITY_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/;
+const PASSWORD_RESET_TTL_MINUTES = Number.parseInt(
+  process.env.PASSWORD_RESET_TTL_MINUTES || "30",
+  10
+);
+const PASSWORD_RESET_TTL_MS =
+  (Number.isFinite(PASSWORD_RESET_TTL_MINUTES) && PASSWORD_RESET_TTL_MINUTES > 0
+    ? PASSWORD_RESET_TTL_MINUTES
+    : 30) *
+  60 *
+  1000;
 
 const isDuplicateKeyError = (error) => error?.code === 11000;
 const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
@@ -36,6 +47,20 @@ const hashesMatch = (rawToken, storedHash) => {
   }
 
   return crypto.timingSafeEqual(left, right);
+};
+
+const resolvePasswordResetUrl = (token) => {
+  const configuredBaseUrl =
+    process.env.PASSWORD_RESET_URL || process.env.CLIENT_URL || "http://localhost:5173/auth";
+
+  try {
+    const url = new URL(configuredBaseUrl);
+    url.searchParams.set("token", token);
+    return url.toString();
+  } catch (_error) {
+    const separator = configuredBaseUrl.includes("?") ? "&" : "?";
+    return `${configuredBaseUrl}${separator}token=${encodeURIComponent(token)}`;
+  }
 };
 
 const clearRefreshTokenSession = async (user) => {
@@ -119,6 +144,47 @@ const normalizeLoginPayload = (payload) => {
   return { email, password };
 };
 
+const normalizeForgotPasswordPayload = (payload) => {
+  assertRequired(payload, ["email"]);
+
+  const email = String(payload.email).toLowerCase().trim();
+  if (!EMAIL_REGEX.test(email)) {
+    throw createError(400, "email must be a valid email address");
+  }
+
+  return { email };
+};
+
+const normalizeResetPasswordPayload = (payload) => {
+  const token = String(payload?.token ?? payload?.resetToken ?? "").trim();
+  const password = String(payload?.password ?? payload?.newPassword ?? "");
+  const confirmPassword =
+    payload?.confirmPassword === undefined || payload?.confirmPassword === null
+      ? null
+      : String(payload.confirmPassword);
+
+  if (!token) {
+    throw createError(400, "token is required");
+  }
+
+  if (password.length < 8) {
+    throw createError(400, "password must be at least 8 characters long");
+  }
+
+  if (!PASSWORD_COMPLEXITY_REGEX.test(password)) {
+    throw createError(
+      400,
+      "password must include at least one uppercase letter, one lowercase letter, and one number"
+    );
+  }
+
+  if (confirmPassword !== null && confirmPassword !== password) {
+    throw createError(400, "password confirmation does not match");
+  }
+
+  return { token, password };
+};
+
 export const registerUser = asyncHandler(async (req, res) => {
   const { username, email, password } = normalizeSignupPayload(req.body);
 
@@ -145,6 +211,25 @@ export const registerUser = asyncHandler(async (req, res) => {
     throw error;
   }
 
+  // Email confirmation is mandatory for account creation.
+  try {
+    const emailResult = await sendAccountCreatedEmail({
+      to: user.email,
+      username: user.username,
+    });
+    if (!emailResult?.sent) {
+      throw createError(503, "Could not send confirmation email. Please try again.");
+    }
+  } catch (error) {
+    // Roll back user creation if confirmation email fails.
+    await User.findByIdAndDelete(user._id);
+    if (error?.statusCode) {
+      throw error;
+    }
+    console.error("Failed to send account creation email:", error.message);
+    throw createError(503, "Could not send confirmation email. Please try again.");
+  }
+
   const { accessToken, refreshToken } = await issueTokensForUser(user);
 
   return sendItem(
@@ -154,6 +239,7 @@ export const registerUser = asyncHandler(async (req, res) => {
       token: accessToken,
       accessToken,
       refreshToken,
+      confirmationEmailSent: true,
     },
     201
   );
@@ -178,6 +264,55 @@ export const loginUser = asyncHandler(async (req, res) => {
     token: accessToken,
     accessToken,
     refreshToken,
+  });
+});
+
+export const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = normalizeForgotPasswordPayload(req.body);
+  const genericMessage = "If an account exists, a reset link has been sent.";
+
+  const user = await User.findOne({ email });
+  if (!user) {
+    return sendItem(res, { message: genericMessage });
+  }
+
+  const resetToken = crypto.randomBytes(32).toString("hex");
+  const resetUrl = resolvePasswordResetUrl(resetToken);
+
+  user.passwordResetTokenHash = hashToken(resetToken);
+  user.passwordResetExpiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
+  await user.save();
+
+  const responseData = { message: genericMessage };
+
+  if (process.env.NODE_ENV !== "production") {
+    responseData.resetToken = resetToken;
+    responseData.resetUrl = resetUrl;
+    responseData.expiresAt = user.passwordResetExpiresAt;
+    console.info(`Password reset link for ${email}: ${resetUrl}`);
+  }
+
+  return sendItem(res, responseData);
+});
+
+export const resetPassword = asyncHandler(async (req, res) => {
+  const { token, password } = normalizeResetPasswordPayload(req.body);
+  const resetTokenHash = hashToken(token);
+
+  const user = await User.findOne({ passwordResetTokenHash: resetTokenHash });
+  if (!user || !user.passwordResetExpiresAt || user.passwordResetExpiresAt.getTime() <= Date.now()) {
+    throw createError(400, "Invalid or expired reset token");
+  }
+
+  user.password = password;
+  user.passwordResetTokenHash = null;
+  user.passwordResetExpiresAt = null;
+  user.refreshTokenHash = null;
+  user.refreshTokenExpiresAt = null;
+  await user.save();
+
+  return sendItem(res, {
+    message: "Password reset successful. Please sign in.",
   });
 });
 
