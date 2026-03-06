@@ -6,6 +6,7 @@ import connectDB from './config/database.js';
 import app from './app.js';
 import { JWT_SECRET } from "./config/constants.js";
 import { getUserRoom } from "./utils/emitNotification.js";
+import { startReminderScheduler } from "./utils/reminderScheduler.js";
 
 const PORT = process.env.PORT || 4000;
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || "http://localhost:5173")
@@ -61,6 +62,7 @@ const startServer = async () => {
     });
 
     app.set('io', io);
+    const stopReminderScheduler = startReminderScheduler({ io });
 
     io.on('connection', (socket) => {
       const userId = resolveSocketUserId(socket);
@@ -92,6 +94,13 @@ const startServer = async () => {
       console.error('Server error:', error);
       process.exit(1);
     });
+
+    const shutdown = () => {
+      stopReminderScheduler();
+    };
+
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
   } catch (error) {
     console.error('MongoDB connection failed!!', error);
     process.exit(1);

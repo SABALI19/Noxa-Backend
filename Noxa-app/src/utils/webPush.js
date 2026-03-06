@@ -102,6 +102,7 @@ const buildPushTemplate = (payload) => {
     goal_completed: { title: "Goal Completed", body: `Completed: ${itemTitle}` },
     goal_updated: { title: "Goal Updated", body: `Updated: ${itemTitle}` },
     reminder_created: { title: "Reminder Set", body: `Reminder: ${itemTitle}` },
+    reminder_triggered: { title: "Reminder Due", body: itemTitle },
     reminder_updated: { title: "Reminder Updated", body: `Updated: ${itemTitle}` },
     reminder_deleted: { title: "Reminder Deleted", body: `Deleted: ${itemTitle}` },
     note_created: { title: "Note Created", body: `Created: ${itemTitle}` },
@@ -170,4 +171,3 @@ export const sendUserWebPushNotification = async (userId, payload) => {
     );
   }
 };
-
