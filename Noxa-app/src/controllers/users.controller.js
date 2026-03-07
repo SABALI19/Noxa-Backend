@@ -15,6 +15,7 @@ import {
   upsertUserPushSubscription,
 } from "../utils/webPush.js";
 import { sendAccountCreatedEmail } from "../utils/mailer.js";
+import { emitNotification } from "../utils/emitNotification.js";
 
 const USERNAME_REGEX = /^[a-z0-9_]+$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -240,6 +241,21 @@ export const registerUser = asyncHandler(async (req, res) => {
 
   const { accessToken, refreshToken } = await issueTokensForUser(user);
 
+  const signupNotification = emitNotification(
+    req,
+    {
+      eventId: `account_created_${user._id}_${Date.now()}`,
+      notificationType: "account_created",
+      itemType: "account",
+      item: {
+        id: String(user._id),
+        title: user.username,
+      },
+      message: `Welcome ${user.username}, your account was created successfully.`,
+    },
+    { userId: String(user._id) }
+  );
+
   return sendItem(
     res,
     {
@@ -248,6 +264,8 @@ export const registerUser = asyncHandler(async (req, res) => {
       accessToken,
       refreshToken,
       confirmationEmailSent,
+      message: "Signup successful",
+      notification: signupNotification,
     },
     201
   );
@@ -267,11 +285,28 @@ export const loginUser = asyncHandler(async (req, res) => {
 
   const { accessToken, refreshToken } = await issueTokensForUser(user);
 
+  const loginNotification = emitNotification(
+    req,
+    {
+      eventId: `user_logged_in_${user._id}_${Date.now()}`,
+      notificationType: "user_logged_in",
+      itemType: "account",
+      item: {
+        id: String(user._id),
+        title: user.username,
+      },
+      message: `Welcome back ${user.username}, you logged in successfully.`,
+    },
+    { userId: String(user._id) }
+  );
+
   return sendItem(res, {
     user: user.toJSON(),
     token: accessToken,
     accessToken,
     refreshToken,
+    message: "Login successful",
+    notification: loginNotification,
   });
 });
 

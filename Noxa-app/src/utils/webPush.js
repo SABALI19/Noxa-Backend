@@ -95,6 +95,8 @@ const buildPushTemplate = (payload) => {
   const type = payload?.notificationType || "notification";
 
   const templates = {
+    account_created: { title: "Account Created", body: "Welcome to Noxa. Your account is ready." },
+    user_logged_in: { title: "Login Successful", body: "You signed in successfully." },
     task_created: { title: "Task Created", body: `Created: ${itemTitle}` },
     task_updated: { title: "Task Updated", body: `Updated: ${itemTitle}` },
     task_deleted: { title: "Task Deleted", body: `Deleted: ${itemTitle}` },
