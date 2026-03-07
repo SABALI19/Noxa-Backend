@@ -29,6 +29,8 @@ const PASSWORD_RESET_TTL_MS =
     : 30) *
   60 *
   1000;
+const isSignupEmailRequired =
+  String(process.env.SIGNUP_EMAIL_REQUIRED || "false").trim().toLowerCase() === "true";
 
 const isDuplicateKeyError = (error) => error?.code === 11000;
 const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
@@ -211,26 +213,29 @@ export const registerUser = asyncHandler(async (req, res) => {
     throw error;
   }
 
-  // Email confirmation is mandatory for account creation.
+  let confirmationEmailSent = false;
   try {
     const emailResult = await sendAccountCreatedEmail({
-  to: user.email,
-  username: user.username,
-});
+      to: user.email,
+      username: user.username,
+    });
 
-if (!emailResult?.sent && !emailResult?.skipped) {
-  // Only fail if it actually tried and failed, not if it was skipped
-  await User.findByIdAndDelete(user._id);
-  throw createError(503, "Could not send confirmation email. Please try again.");
-}
-  } catch (error) {
-    // Roll back user creation if confirmation email fails.
-    await User.findByIdAndDelete(user._id);
-    if (error?.statusCode) {
-      throw error;
+    confirmationEmailSent = Boolean(emailResult?.sent);
+
+    if (!emailResult?.sent && !emailResult?.skipped) {
+      throw createError(503, "Could not send confirmation email. Please try again.");
     }
+  } catch (error) {
     console.error("Failed to send account creation email:", error.message);
-    throw createError(503, "Could not send confirmation email. Please try again.");
+
+    // Only roll back account creation when strict signup email mode is enabled.
+    if (isSignupEmailRequired) {
+      await User.findByIdAndDelete(user._id);
+      if (error?.statusCode) {
+        throw error;
+      }
+      throw createError(503, "Could not send confirmation email. Please try again.");
+    }
   }
 
   const { accessToken, refreshToken } = await issueTokensForUser(user);
@@ -242,7 +247,7 @@ if (!emailResult?.sent && !emailResult?.skipped) {
       token: accessToken,
       accessToken,
       refreshToken,
-      confirmationEmailSent: true,
+      confirmationEmailSent,
     },
     201
   );
