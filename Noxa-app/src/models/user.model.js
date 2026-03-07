@@ -12,12 +12,22 @@ const userSchema = new Schema(
       minlength: 3,
       maxlength: 30,
     },
+    name: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 80,
+    },
     email: {
       type: String,
       required: true,
       unique: true,
       trim: true,
       lowercase: true,
+    },
+    avatar: {
+      type: String,
+      default: null,
     },
     password: {
       type: String,

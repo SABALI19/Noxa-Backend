@@ -20,6 +20,9 @@ import { emitNotification } from "../utils/emitNotification.js";
 const USERNAME_REGEX = /^[a-z0-9_]+$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_COMPLEXITY_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/;
+const AVATAR_URL_REGEX = /^https?:\/\/\S+$/i;
+const AVATAR_DATA_URI_PREFIX = "data:image/";
+const MAX_AVATAR_LENGTH = 8 * 1024 * 1024;
 const PASSWORD_RESET_TTL_MINUTES = Number.parseInt(
   process.env.PASSWORD_RESET_TTL_MINUTES || "30",
   10
@@ -97,6 +100,7 @@ const normalizeSignupPayload = (payload) => {
   }
 
   const username = String(usernameInput).toLowerCase().trim().replace(/\s+/g, "_");
+  const name = String(payload.name ?? usernameInput ?? "").trim().slice(0, 80);
   const email = String(payload.email).toLowerCase().trim();
   const password = String(payload.password);
   const confirmPassword =
@@ -131,7 +135,7 @@ const normalizeSignupPayload = (payload) => {
     throw createError(400, "password confirmation does not match");
   }
 
-  return { username, email, password };
+  return { username, name, email, password };
 };
 
 const normalizeLoginPayload = (payload) => {
@@ -188,8 +192,72 @@ const normalizeResetPasswordPayload = (payload) => {
   return { token, password };
 };
 
+const normalizeProfileUpdatePayload = (payload) => {
+  if (!payload || typeof payload !== "object") {
+    throw createError(400, "Request body is required");
+  }
+
+  const updates = {};
+
+  if (payload.username !== undefined) {
+    const username = String(payload.username).toLowerCase().trim().replace(/\s+/g, "_");
+
+    if (username.length < 3 || username.length > 30) {
+      throw createError(400, "username must be between 3 and 30 characters");
+    }
+
+    if (!USERNAME_REGEX.test(username)) {
+      throw createError(400, "username can only contain lowercase letters, numbers, and underscores");
+    }
+
+    updates.username = username;
+  }
+
+  if (payload.name !== undefined) {
+    const name = String(payload.name || "").trim();
+    if (name.length > 80) {
+      throw createError(400, "name must be at most 80 characters");
+    }
+    updates.name = name;
+  }
+
+  if (payload.email !== undefined) {
+    const email = String(payload.email).toLowerCase().trim();
+    if (!EMAIL_REGEX.test(email)) {
+      throw createError(400, "email must be a valid email address");
+    }
+    updates.email = email;
+  }
+
+  if (payload.avatar !== undefined) {
+    const rawAvatar = payload.avatar;
+    if (rawAvatar === null || String(rawAvatar).trim() === "") {
+      updates.avatar = null;
+    } else {
+      const avatar = String(rawAvatar).trim();
+      if (avatar.length > MAX_AVATAR_LENGTH) {
+        throw createError(400, "avatar is too large");
+      }
+
+      const isDataUri = avatar.startsWith(AVATAR_DATA_URI_PREFIX);
+      const isHttpUrl = AVATAR_URL_REGEX.test(avatar);
+      if (!isDataUri && !isHttpUrl) {
+        throw createError(400, "avatar must be an image URL or data URI");
+      }
+
+      updates.avatar = avatar;
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    throw createError(400, "At least one profile field is required");
+  }
+
+  return updates;
+};
+
 export const registerUser = asyncHandler(async (req, res) => {
-  const { username, email, password } = normalizeSignupPayload(req.body);
+  const { username, name, email, password } = normalizeSignupPayload(req.body);
 
   const existing = await User.findOne({
     $or: [{ email }, { username }],
@@ -203,6 +271,7 @@ export const registerUser = asyncHandler(async (req, res) => {
   try {
     user = await User.create({
       username,
+      name,
       email,
       password,
     });
@@ -427,6 +496,67 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
   }
 
   return sendItem(res, user.toJSON());
+});
+
+export const updateCurrentUserProfile = asyncHandler(async (req, res) => {
+  const updates = normalizeProfileUpdatePayload(req.body);
+
+  const user = await User.findById(req.user.id);
+  if (!user) {
+    throw createError(404, "User not found");
+  }
+
+  if (updates.username && updates.username !== user.username) {
+    const existingUser = await User.findOne({
+      username: updates.username,
+      _id: { $ne: user._id },
+    }).select("_id");
+    if (existingUser) {
+      throw createError(409, "Username already exists");
+    }
+  }
+
+  if (updates.email && updates.email !== user.email) {
+    const existingUser = await User.findOne({
+      email: updates.email,
+      _id: { $ne: user._id },
+    }).select("_id");
+    if (existingUser) {
+      throw createError(409, "Email already exists");
+    }
+  }
+
+  Object.assign(user, updates);
+
+  try {
+    await user.save();
+  } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      throw createError(409, "Email or username already exists");
+    }
+    throw error;
+  }
+
+  const profileNotification = emitNotification(
+    req,
+    {
+      eventId: `profile_updated_${user._id}_${Date.now()}`,
+      notificationType: "profile_updated",
+      itemType: "profile",
+      item: {
+        id: String(user._id),
+        title: user.username,
+      },
+      message: "Your profile was updated successfully.",
+    },
+    { userId: String(user._id) }
+  );
+
+  return sendItem(res, {
+    user: user.toJSON(),
+    message: "Profile updated successfully",
+    notification: profileNotification,
+  });
 });
 
 export const getPushPublicKey = asyncHandler(async (_req, res) => {

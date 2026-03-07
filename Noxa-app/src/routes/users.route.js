@@ -9,6 +9,7 @@ import {
   registerUser,
   resetPassword,
   subscribePushNotifications,
+  updateCurrentUserProfile,
   unsubscribePushNotifications,
 } from "../controllers/users.controller.js";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
@@ -26,5 +27,6 @@ router.get("/push/public-key", getPushPublicKey);
 router.post("/push/subscribe", authMiddleware, subscribePushNotifications);
 router.post("/push/unsubscribe", authMiddleware, unsubscribePushNotifications);
 router.get("/me", authMiddleware, getCurrentUser);
+router.patch("/me", authMiddleware, updateCurrentUserProfile);
 
 export default router;
