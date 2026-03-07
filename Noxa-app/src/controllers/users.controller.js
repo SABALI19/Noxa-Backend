@@ -214,12 +214,15 @@ export const registerUser = asyncHandler(async (req, res) => {
   // Email confirmation is mandatory for account creation.
   try {
     const emailResult = await sendAccountCreatedEmail({
-      to: user.email,
-      username: user.username,
-    });
-    if (!emailResult?.sent) {
-      throw createError(503, "Could not send confirmation email. Please try again.");
-    }
+  to: user.email,
+  username: user.username,
+});
+
+if (!emailResult?.sent && !emailResult?.skipped) {
+  // Only fail if it actually tried and failed, not if it was skipped
+  await User.findByIdAndDelete(user._id);
+  throw createError(503, "Could not send confirmation email. Please try again.");
+}
   } catch (error) {
     // Roll back user creation if confirmation email fails.
     await User.findByIdAndDelete(user._id);
