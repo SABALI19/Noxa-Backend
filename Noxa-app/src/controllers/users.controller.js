@@ -14,7 +14,7 @@ import {
   removeUserPushSubscription,
   upsertUserPushSubscription,
 } from "../utils/webPush.js";
-import { sendAccountCreatedEmail } from "../utils/mailer.js";
+import { isMailConfigured, sendAccountCreatedEmail } from "../utils/mailer.js";
 import { emitNotification } from "../utils/emitNotification.js";
 
 const USERNAME_REGEX = /^[a-z0-9_]+$/;
@@ -215,29 +215,42 @@ export const registerUser = asyncHandler(async (req, res) => {
   }
 
   let confirmationEmailSent = false;
-  try {
-    const emailResult = await sendAccountCreatedEmail({
-      to: user.email,
-      username: user.username,
-    });
+  const signupEmailConfigured = isMailConfigured();
+  const signupEmailPayload = {
+    to: user.email,
+    username: user.username,
+  };
 
-    confirmationEmailSent = Boolean(emailResult?.sent);
+  if (isSignupEmailRequired) {
+    try {
+      const emailResult = await sendAccountCreatedEmail(signupEmailPayload);
+      confirmationEmailSent = Boolean(emailResult?.sent);
 
-    if (!emailResult?.sent && !emailResult?.skipped) {
-      throw createError(503, "Could not send confirmation email. Please try again.");
-    }
-  } catch (error) {
-    console.error("Failed to send account creation email:", error.message);
-
-    // Only roll back account creation when strict signup email mode is enabled.
-    if (isSignupEmailRequired) {
+      if (!emailResult?.sent && !emailResult?.skipped) {
+        throw createError(503, "Could not send confirmation email. Please try again.");
+      }
+    } catch (error) {
+      console.error("Failed to send account creation email:", error.message);
       await User.findByIdAndDelete(user._id);
       if (error?.statusCode) {
         throw error;
       }
       throw createError(503, "Could not send confirmation email. Please try again.");
     }
+  } else if (signupEmailConfigured) {
+    // Non-blocking mode: do not delay signup response on SMTP latency.
+    void sendAccountCreatedEmail(signupEmailPayload)
+      .then((emailResult) => {
+        if (!emailResult?.sent && !emailResult?.skipped) {
+          console.warn("Could not send signup confirmation email (non-blocking mode).");
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to send account creation email:", error.message);
+      });
   }
+
+  const confirmationEmailQueued = !isSignupEmailRequired && signupEmailConfigured;
 
   const { accessToken, refreshToken } = await issueTokensForUser(user);
 
@@ -264,6 +277,7 @@ export const registerUser = asyncHandler(async (req, res) => {
       accessToken,
       refreshToken,
       confirmationEmailSent,
+      confirmationEmailQueued,
       message: "Signup successful",
       notification: signupNotification,
     },
