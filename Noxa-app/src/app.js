@@ -10,6 +10,7 @@ import remindersRouter from "./routes/reminders.route.js";
 import tasksRouter from "./routes/tasks.route.js";
 import trackingRouter from "./routes/tracking.route.js";
 import usersRouter from "./routes/users.route.js";
+import wordOfDayRouter from "./routes/wordOfDay.route.js";
 
 const app = express();
 
@@ -52,6 +53,7 @@ app.use("/api/v1/reminders", remindersRouter);
 app.use("/api/v1/goals", goalsRouter);
 app.use("/api/v1/notes", notesRouter);
 app.use("/api/v1/tracking", trackingRouter);
+app.use("/api/v1/community/words", wordOfDayRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ message: "Route not found" });
