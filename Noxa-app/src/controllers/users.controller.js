@@ -23,6 +23,7 @@ const PASSWORD_COMPLEXITY_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/;
 const AVATAR_URL_REGEX = /^https?:\/\/\S+$/i;
 const AVATAR_DATA_URI_PREFIX = "data:image/";
 const MAX_AVATAR_LENGTH = 8 * 1024 * 1024;
+const MAX_RINGTONE_NAME_LENGTH = 80;
 const PASSWORD_RESET_TTL_MINUTES = Number.parseInt(
   process.env.PASSWORD_RESET_TTL_MINUTES || "30",
   10
@@ -247,6 +248,17 @@ const normalizeProfileUpdatePayload = (payload) => {
 
       updates.avatar = avatar;
     }
+  }
+
+  if (payload.selectedRingtone !== undefined) {
+    const selectedRingtone = String(payload.selectedRingtone || "").trim();
+    if (!selectedRingtone) {
+      throw createError(400, "selectedRingtone must not be empty");
+    }
+    if (selectedRingtone.length > MAX_RINGTONE_NAME_LENGTH) {
+      throw createError(400, "selectedRingtone is too long");
+    }
+    updates.selectedRingtone = selectedRingtone;
   }
 
   if (Object.keys(updates).length === 0) {
@@ -500,6 +512,9 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
 
 export const updateCurrentUserProfile = asyncHandler(async (req, res) => {
   const updates = normalizeProfileUpdatePayload(req.body);
+  const updateKeys = Object.keys(updates);
+  const isSelectedRingtoneOnlyUpdate =
+    updateKeys.length === 1 && updateKeys[0] === "selectedRingtone";
 
   const user = await User.findById(req.user.id);
   if (!user) {
@@ -537,20 +552,22 @@ export const updateCurrentUserProfile = asyncHandler(async (req, res) => {
     throw error;
   }
 
-  const profileNotification = emitNotification(
-    req,
-    {
-      eventId: `profile_updated_${user._id}_${Date.now()}`,
-      notificationType: "profile_updated",
-      itemType: "profile",
-      item: {
-        id: String(user._id),
-        title: user.username,
-      },
-      message: "Your profile was updated successfully.",
-    },
-    { userId: String(user._id) }
-  );
+  const profileNotification = isSelectedRingtoneOnlyUpdate
+    ? null
+    : emitNotification(
+        req,
+        {
+          eventId: `profile_updated_${user._id}_${Date.now()}`,
+          notificationType: "profile_updated",
+          itemType: "profile",
+          item: {
+            id: String(user._id),
+            title: user.username,
+          },
+          message: "Your profile was updated successfully.",
+        },
+        { userId: String(user._id) }
+      );
 
   return sendItem(res, {
     user: user.toJSON(),

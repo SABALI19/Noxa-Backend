@@ -29,6 +29,12 @@ const userSchema = new Schema(
       type: String,
       default: null,
     },
+    selectedRingtone: {
+      type: String,
+      default: "Default",
+      trim: true,
+      maxlength: 80,
+    },
     role: {
       type: String,
       enum: ["member", "admin", "super_admin"],
