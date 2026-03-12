@@ -1,4 +1,5 @@
 import { Reminder } from "../models/reminder.model.js";
+import { Goal } from "../models/goal.model.js";
 import { Task } from "../models/task.model.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { createError, sendItem, sendList } from "../utils/http.js";
@@ -17,6 +18,25 @@ import {
   TASK_CATEGORY_VALUES,
 } from "../config/constants.js";
 
+const normalizeNotificationMethod = (value, fallback = "in_app") => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "app") return "in_app";
+  if (NOTIFICATION_METHOD_VALUES.includes(normalized)) return normalized;
+  return fallback;
+};
+
+const normalizeReminderPayload = (payload = {}) => {
+  const normalizedTaskId = payload.taskId || payload.linkedTaskId;
+  return {
+    ...payload,
+    taskId: normalizedTaskId || undefined,
+    notificationMethod:
+      payload.notificationMethod === undefined
+        ? payload.notificationMethod
+        : normalizeNotificationMethod(payload.notificationMethod),
+  };
+};
+
 const validateReminderPayload = (payload, isPatch = false) => {
   if (!isPatch) {
     assertRequired(payload, ["title", "dueDate", "reminderTime"]);
@@ -32,6 +52,7 @@ const validateReminderPayload = (payload, isPatch = false) => {
 const pickReminderUpdates = (payload) => {
   const allowedFields = [
     "taskId",
+    "linkedGoalId",
     "title",
     "dueDate",
     "reminderTime",
@@ -56,6 +77,14 @@ const validateTaskOwnership = async (taskId, userId) => {
   }
 };
 
+const validateGoalOwnership = async (goalId, userId) => {
+  assertObjectId(goalId, "linkedGoalId");
+  const goal = await Goal.findOne({ _id: goalId, userId });
+  if (!goal) {
+    throw createError(400, "linkedGoalId does not belong to the authenticated user");
+  }
+};
+
 const resolveReminderNotificationType = (beforeReminder, afterReminder) => {
   if (beforeReminder.status !== "completed" && afterReminder.status === "completed") {
     return "reminder_completed";
@@ -73,10 +102,15 @@ const resolveReminderNotificationType = (beforeReminder, afterReminder) => {
 };
 
 export const createReminder = asyncHandler(async (req, res) => {
+  req.body = normalizeReminderPayload(req.body);
   validateReminderPayload(req.body);
 
   if (req.body.taskId) {
     await validateTaskOwnership(req.body.taskId, req.user.id);
+  }
+
+  if (req.body.linkedGoalId) {
+    await validateGoalOwnership(req.body.linkedGoalId, req.user.id);
   }
 
   const reminder = await Reminder.create({
@@ -110,11 +144,15 @@ export const getReminders = asyncHandler(async (req, res) => {
 export const updateReminder = asyncHandler(async (req, res) => {
   assertObjectId(req.params.id);
 
-  const updates = pickReminderUpdates(req.body);
+  const updates = pickReminderUpdates(normalizeReminderPayload(req.body));
   validateReminderPayload(updates, true);
 
   if (updates.taskId) {
     await validateTaskOwnership(updates.taskId, req.user.id);
+  }
+
+  if (updates.linkedGoalId) {
+    await validateGoalOwnership(updates.linkedGoalId, req.user.id);
   }
 
   const existingReminder = await Reminder.findOne({ _id: req.params.id, userId: req.user.id });

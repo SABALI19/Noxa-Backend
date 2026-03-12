@@ -7,9 +7,68 @@ import {
   NOTIFICATION_METHOD_VALUES,
   PRIORITY_VALUES,
   TASK_CATEGORY_VALUES,
+  TASK_REMINDER_FREQUENCY_VALUES,
+  TASK_REMINDER_TIMING_VALUES,
   TASK_RECURRENCE_VALUES,
   TASK_STATUS_VALUES,
 } from "../config/constants.js";
+
+const TASK_REMINDER_TIMING_TO_MINUTES = {
+  "1_hour_before": 60,
+  "2_hours_before": 120,
+  "1_day_before": 1440,
+  "2_days_before": 2880,
+  "1_week_before": 10080,
+  on_due_date: 0,
+};
+
+const normalizeNotificationMethod = (value, fallback = "in_app") => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "app") return "in_app";
+  if (NOTIFICATION_METHOD_VALUES.includes(normalized)) return normalized;
+  return fallback;
+};
+
+const inferTaskReminderTiming = (settings = {}) => {
+  const explicitTiming = String(settings.timing || "").trim().toLowerCase();
+  if (TASK_REMINDER_TIMING_VALUES.includes(explicitTiming)) {
+    return explicitTiming;
+  }
+
+  const minutes = Number(settings.timeBeforeMinutes);
+  if (Number.isFinite(minutes)) {
+    const mapped = Object.entries(TASK_REMINDER_TIMING_TO_MINUTES).find(
+      ([, candidate]) => candidate === minutes
+    );
+    return mapped ? mapped[0] : "custom";
+  }
+
+  return settings.customTime ? "custom" : "1_day_before";
+};
+
+const normalizeTaskReminderSettings = (settings = {}) => {
+  const frequency = String(settings.frequency || "").trim().toLowerCase();
+  const timing = inferTaskReminderTiming(settings);
+  const notificationMethod = normalizeNotificationMethod(
+    settings.notificationMethod ?? settings.method,
+    "in_app"
+  );
+  const hasExplicitMinutes = Number.isFinite(Number(settings.timeBeforeMinutes));
+
+  return {
+    enabled: settings.enabled !== false,
+    frequency: TASK_REMINDER_FREQUENCY_VALUES.includes(frequency) ? frequency : "once",
+    timing,
+    customTime: settings.customTime || undefined,
+    notificationMethod,
+    timeBeforeMinutes: hasExplicitMinutes
+      ? Number(settings.timeBeforeMinutes)
+      : TASK_REMINDER_TIMING_TO_MINUTES[timing] ?? 0,
+    method: notificationMethod,
+    lastTriggeredAt: settings.lastTriggeredAt || undefined,
+    lastTriggeredScheduleKey: settings.lastTriggeredScheduleKey || undefined,
+  };
+};
 
 const validateTaskPayload = (payload, isPatch = false) => {
   if (!isPatch && !payload.title) {
@@ -26,10 +85,22 @@ const validateTaskPayload = (payload, isPatch = false) => {
       throw createError(400, "reminderSettings must be an object");
     }
 
+    payload.reminderSettings = normalizeTaskReminderSettings(payload.reminderSettings);
+
     assertEnum(
-      "reminderSettings.method",
-      payload.reminderSettings.method,
+      "reminderSettings.notificationMethod",
+      payload.reminderSettings.notificationMethod,
       NOTIFICATION_METHOD_VALUES
+    );
+    assertEnum(
+      "reminderSettings.frequency",
+      payload.reminderSettings.frequency,
+      TASK_REMINDER_FREQUENCY_VALUES
+    );
+    assertEnum(
+      "reminderSettings.timing",
+      payload.reminderSettings.timing,
+      TASK_REMINDER_TIMING_VALUES
     );
     assertNonNegativeNumber(
       payload.reminderSettings.timeBeforeMinutes,

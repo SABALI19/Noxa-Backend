@@ -93,15 +93,19 @@ export const removeUserPushSubscription = async (userId, endpoint) => {
 const buildPushTemplate = (payload) => {
   const itemTitle = payload?.item?.title || "Activity update";
   const type = payload?.notificationType || "notification";
+  const itemId = payload?.item?.id || null;
+  const itemType = payload?.itemType || "system";
 
   const templates = {
     account_created: { title: "Account Created", body: "Welcome to Noxa. Your account is ready." },
     user_logged_in: { title: "Login Successful", body: "You signed in successfully." },
     task_created: { title: "Task Created", body: `Created: ${itemTitle}` },
+    task_reminder: { title: "Task Reminder", body: itemTitle },
     task_updated: { title: "Task Updated", body: `Updated: ${itemTitle}` },
     task_deleted: { title: "Task Deleted", body: `Deleted: ${itemTitle}` },
     goal_created: { title: "Goal Created", body: `Created: ${itemTitle}` },
     goal_completed: { title: "Goal Completed", body: `Completed: ${itemTitle}` },
+    goal_reminder: { title: "Goal Reminder", body: itemTitle },
     goal_updated: { title: "Goal Updated", body: `Updated: ${itemTitle}` },
     reminder_created: { title: "Reminder Set", body: `Reminder: ${itemTitle}` },
     reminder_triggered: { title: "Reminder Due", body: itemTitle },
@@ -117,6 +121,19 @@ const buildPushTemplate = (payload) => {
     body: String(payload?.message || itemTitle || "You have a new update."),
   };
 
+  const resolveUrl = () => {
+    if (itemType === "task" && itemId) {
+      return `/tasks#task-${encodeURIComponent(String(itemId))}`;
+    }
+    if (itemType === "goal" && itemId) {
+      return `/goals/${encodeURIComponent(String(itemId))}`;
+    }
+    if (type.startsWith("reminder_")) {
+      return "/reminders";
+    }
+    return "/dashboard";
+  };
+
   const template = templates[type] || fallback;
   return {
     title: template.title,
@@ -124,9 +141,9 @@ const buildPushTemplate = (payload) => {
     data: {
       eventId: payload?.eventId || `${Date.now()}`,
       notificationType: type,
-      itemType: payload?.itemType || "system",
-      itemId: payload?.item?.id || null,
-      url: "/dashboard",
+      itemType,
+      itemId,
+      url: resolveUrl(),
     },
   };
 };

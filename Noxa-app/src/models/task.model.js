@@ -3,6 +3,8 @@ import {
   NOTIFICATION_METHOD_VALUES,
   PRIORITY_VALUES,
   TASK_CATEGORY_VALUES,
+  TASK_REMINDER_FREQUENCY_VALUES,
+  TASK_REMINDER_TIMING_VALUES,
   TASK_RECURRENCE_VALUES,
   TASK_STATUS_VALUES,
 } from "../config/constants.js";
@@ -51,6 +53,24 @@ const taskSchema = new Schema(
         type: Boolean,
         default: false,
       },
+      frequency: {
+        type: String,
+        enum: TASK_REMINDER_FREQUENCY_VALUES,
+        default: "once",
+      },
+      timing: {
+        type: String,
+        enum: TASK_REMINDER_TIMING_VALUES,
+        default: "1_day_before",
+      },
+      customTime: {
+        type: Date,
+      },
+      notificationMethod: {
+        type: String,
+        enum: NOTIFICATION_METHOD_VALUES,
+        default: "in_app",
+      },
       timeBeforeMinutes: {
         type: Number,
         min: 0,
@@ -59,7 +79,14 @@ const taskSchema = new Schema(
       method: {
         type: String,
         enum: NOTIFICATION_METHOD_VALUES,
-        default: "push",
+        default: "in_app",
+      },
+      lastTriggeredAt: {
+        type: Date,
+      },
+      lastTriggeredScheduleKey: {
+        type: String,
+        trim: true,
       },
     },
     userId: {

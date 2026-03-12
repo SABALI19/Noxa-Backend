@@ -12,9 +12,11 @@ export const PRIORITY_VALUES = ["low", "medium", "high"];
 export const TASK_CATEGORY_VALUES = [
   "work",
   "personal",
+  "shopping",
   "health",
   "finance",
   "education",
+  "general",
   "other",
 ];
 
@@ -22,11 +24,23 @@ export const TASK_STATUS_VALUES = ["pending", "in_progress", "completed", "cance
 
 export const TASK_RECURRENCE_VALUES = ["none", "daily", "weekly", "monthly", "yearly"];
 
-export const NOTIFICATION_METHOD_VALUES = ["push", "email", "sms", "in_app"];
+export const NOTIFICATION_METHOD_VALUES = ["push", "email", "sms", "in_app", "app", "both"];
 
 export const REMINDER_STATUS_VALUES = ["pending", "sent", "dismissed", "snoozed"];
 
 export const REMINDER_FREQUENCY_VALUES = ["once", "daily", "weekly", "monthly"];
+
+export const TASK_REMINDER_FREQUENCY_VALUES = ["once", "multiple", "daily"];
+
+export const TASK_REMINDER_TIMING_VALUES = [
+  "1_hour_before",
+  "2_hours_before",
+  "1_day_before",
+  "2_days_before",
+  "1_week_before",
+  "on_due_date",
+  "custom",
+];
 
 export const GOAL_CATEGORY_VALUES = [
   "health",

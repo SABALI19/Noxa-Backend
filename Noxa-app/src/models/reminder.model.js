@@ -13,6 +13,10 @@ const reminderSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "Task",
     },
+    linkedGoalId: {
+      type: Schema.Types.ObjectId,
+      ref: "Goal",
+    },
     title: {
       type: String,
       required: true,
@@ -49,7 +53,7 @@ const reminderSchema = new Schema(
     notificationMethod: {
       type: String,
       enum: NOTIFICATION_METHOD_VALUES,
-      default: "push",
+      default: "in_app",
     },
     note: {
       type: String,
