@@ -13,12 +13,13 @@ import {
   unsubscribePushNotifications,
 } from "../controllers/users.controller.js";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { apiLimiter } from "../middlewares/rateLimiter.js";
 
 const router = Router();
 
 router.post("/signup", registerUser);
 router.post("/register", registerUser);
-router.post("/login", loginUser);
+router.post("/login", apiLimiter, loginUser);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
 router.post("/refresh", refreshAuthToken);

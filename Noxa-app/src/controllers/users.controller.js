@@ -14,8 +14,13 @@ import {
   removeUserPushSubscription,
   upsertUserPushSubscription,
 } from "../utils/webPush.js";
-import { isMailConfigured, sendAccountCreatedEmail } from "../utils/mailer.js";
+import {
+  isMailConfigured,
+  sendAccountCreatedEmail,
+  sendPasswordResetOtpEmail,
+} from "../utils/mailer.js";
 import { emitNotification } from "../utils/emitNotification.js";
+import { createAndSaveOtp, verifyOtpForUser } from "../utils/otp.js";
 
 const USERNAME_REGEX = /^[a-z0-9_]+$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -34,6 +39,7 @@ const PASSWORD_RESET_TTL_MS =
     : 30) *
   60 *
   1000;
+const PASSWORD_RESET_OTP_MINUTES = Number.parseInt(process.env.OTP_EXPIRY_MINUTES || "10", 10);
 const isSignupEmailRequired =
   String(process.env.SIGNUP_EMAIL_REQUIRED || "false").trim().toLowerCase() === "true";
 
@@ -165,14 +171,20 @@ const normalizeForgotPasswordPayload = (payload) => {
 
 const normalizeResetPasswordPayload = (payload) => {
   const token = String(payload?.token ?? payload?.resetToken ?? "").trim();
+  const otp = String(payload?.otp ?? payload?.code ?? "").trim();
+  const email = String(payload?.email ?? "").toLowerCase().trim();
   const password = String(payload?.password ?? payload?.newPassword ?? "");
   const confirmPassword =
     payload?.confirmPassword === undefined || payload?.confirmPassword === null
       ? null
       : String(payload.confirmPassword);
 
-  if (!token) {
-    throw createError(400, "token is required");
+  if (!token && (!email || !otp)) {
+    throw createError(400, "token or email plus otp is required");
+  }
+
+  if (email && !EMAIL_REGEX.test(email)) {
+    throw createError(400, "email must be a valid email address");
   }
 
   if (password.length < 8) {
@@ -190,7 +202,7 @@ const normalizeResetPasswordPayload = (payload) => {
     throw createError(400, "password confirmation does not match");
   }
 
-  return { token, password };
+  return { token, otp, email, password };
 };
 
 const normalizeProfileUpdatePayload = (payload) => {
@@ -407,39 +419,71 @@ export const loginUser = asyncHandler(async (req, res) => {
 
 export const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = normalizeForgotPasswordPayload(req.body);
-  const genericMessage = "If an account exists, a reset link has been sent.";
+  const genericMessage = "If an account exists, a reset OTP has been sent.";
 
   const user = await User.findOne({ email });
   if (!user) {
     return sendItem(res, { message: genericMessage });
   }
 
-  const resetToken = crypto.randomBytes(32).toString("hex");
-  const resetUrl = resolvePasswordResetUrl(resetToken);
+  const otpExpiryMinutes =
+    Number.isFinite(PASSWORD_RESET_OTP_MINUTES) && PASSWORD_RESET_OTP_MINUTES > 0
+      ? PASSWORD_RESET_OTP_MINUTES
+      : 10;
+  const { otp, doc } = await createAndSaveOtp(user._id, otpExpiryMinutes);
 
-  user.passwordResetTokenHash = hashToken(resetToken);
-  user.passwordResetExpiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
+  // Keep the old token fields clear so the OTP flow remains the single active reset method.
+  user.passwordResetTokenHash = null;
+  user.passwordResetExpiresAt = null;
   await user.save();
+
+  if (isMailConfigured()) {
+    const emailResult = await sendPasswordResetOtpEmail({
+      to: user.email,
+      username: user.username,
+      otp,
+      expiresInMinutes: otpExpiryMinutes,
+    });
+
+    if (!emailResult?.sent && !emailResult?.skipped) {
+      throw createError(503, "Could not send reset OTP. Please try again.");
+    }
+  }
 
   const responseData = { message: genericMessage };
 
   if (process.env.NODE_ENV !== "production") {
-    responseData.resetToken = resetToken;
-    responseData.resetUrl = resetUrl;
-    responseData.expiresAt = user.passwordResetExpiresAt;
-    console.info(`Password reset link for ${email}: ${resetUrl}`);
+    // Local development can use the raw OTP directly when SMTP delivery is unavailable.
+    responseData.resetOtp = otp;
+    responseData.expiresAt = doc.expiresAt;
+    console.info(`Password reset OTP for ${email}: ${otp}`);
   }
 
   return sendItem(res, responseData);
 });
 
 export const resetPassword = asyncHandler(async (req, res) => {
-  const { token, password } = normalizeResetPasswordPayload(req.body);
-  const resetTokenHash = hashToken(token);
+  const { token, otp, email, password } = normalizeResetPasswordPayload(req.body);
 
-  const user = await User.findOne({ passwordResetTokenHash: resetTokenHash });
-  if (!user || !user.passwordResetExpiresAt || user.passwordResetExpiresAt.getTime() <= Date.now()) {
-    throw createError(400, "Invalid or expired reset token");
+  let user;
+
+  if (token) {
+    const resetTokenHash = hashToken(token);
+    user = await User.findOne({ passwordResetTokenHash: resetTokenHash });
+
+    if (!user || !user.passwordResetExpiresAt || user.passwordResetExpiresAt.getTime() <= Date.now()) {
+      throw createError(400, "Invalid or expired reset token");
+    }
+  } else {
+    user = await User.findOne({ email });
+    if (!user) {
+      throw createError(400, "Invalid or expired OTP");
+    }
+
+    const otpResult = await verifyOtpForUser(user._id, otp);
+    if (!otpResult.valid) {
+      throw createError(400, "Invalid or expired OTP");
+    }
   }
 
   user.password = password;
