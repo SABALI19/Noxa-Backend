@@ -4,8 +4,10 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { createError, sendItem } from "../utils/http.js";
 import {
   getTokenExpiryDate,
+  signLoginOtpToken,
   signAccessToken,
   signRefreshToken,
+  verifyLoginOtpToken,
   verifyRefreshToken,
 } from "../utils/token.js";
 import { assertRequired } from "../utils/validation.js";
@@ -17,10 +19,11 @@ import {
 import {
   isMailConfigured,
   sendAccountCreatedEmail,
+  sendLoginOtpEmail,
   sendPasswordResetOtpEmail,
 } from "../utils/mailer.js";
 import { emitNotification } from "../utils/emitNotification.js";
-import { createAndSaveOtp, verifyOtpForUser } from "../utils/otp.js";
+import { createAndSaveOtp, OTP_PURPOSES, verifyOtpForUser } from "../utils/otp.js";
 
 const USERNAME_REGEX = /^[a-z0-9_]+$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -40,8 +43,14 @@ const PASSWORD_RESET_TTL_MS =
   60 *
   1000;
 const PASSWORD_RESET_OTP_MINUTES = Number.parseInt(process.env.OTP_EXPIRY_MINUTES || "10", 10);
+const LOGIN_OTP_MINUTES = Number.parseInt(
+  process.env.LOGIN_OTP_EXPIRY_MINUTES || process.env.OTP_EXPIRY_MINUTES || "10",
+  10
+);
 const isSignupEmailRequired =
   String(process.env.SIGNUP_EMAIL_REQUIRED || "false").trim().toLowerCase() === "true";
+const isLoginOtpRequired =
+  String(process.env.LOGIN_OTP_REQUIRED || "false").trim().toLowerCase() === "true";
 
 const isDuplicateKeyError = (error) => error?.code === 11000;
 const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
@@ -96,6 +105,34 @@ const issueTokensForUser = async (user) => {
   await user.save();
 
   return { accessToken, refreshToken };
+};
+
+const buildLoginSuccessResponse = async (req, user) => {
+  const { accessToken, refreshToken } = await issueTokensForUser(user);
+
+  const loginNotification = emitNotification(
+    req,
+    {
+      eventId: `user_logged_in_${user._id}_${Date.now()}`,
+      notificationType: "user_logged_in",
+      itemType: "account",
+      item: {
+        id: String(user._id),
+        title: user.username,
+      },
+      message: `Welcome back ${user.username}, you logged in successfully.`,
+    },
+    { userId: String(user._id) }
+  );
+
+  return {
+    user: user.toJSON(),
+    token: accessToken,
+    accessToken,
+    refreshToken,
+    message: "Login successful",
+    notification: loginNotification,
+  };
 };
 
 const normalizeSignupPayload = (payload) => {
@@ -156,6 +193,23 @@ const normalizeLoginPayload = (payload) => {
   }
 
   return { email, password };
+};
+
+const normalizeLoginOtpVerificationPayload = (payload) => {
+  assertRequired(payload, ["loginOtpToken", "otp"]);
+
+  const loginOtpToken = String(payload.loginOtpToken || payload.token || "").trim();
+  const otp = String(payload.otp || payload.code || "").trim();
+
+  if (!loginOtpToken) {
+    throw createError(400, "loginOtpToken is required");
+  }
+
+  if (!otp) {
+    throw createError(400, "otp is required");
+  }
+
+  return { loginOtpToken, otp };
 };
 
 const normalizeForgotPasswordPayload = (payload) => {
@@ -319,7 +373,7 @@ export const registerUser = asyncHandler(async (req, res) => {
       const emailResult = await sendAccountCreatedEmail(signupEmailPayload);
       confirmationEmailSent = Boolean(emailResult?.sent);
 
-      if (!emailResult?.sent && !emailResult?.skipped) {
+      if (!emailResult?.sent) {
         throw createError(503, "Could not send confirmation email. Please try again.");
       }
     } catch (error) {
@@ -390,31 +444,72 @@ export const loginUser = asyncHandler(async (req, res) => {
     throw createError(401, "Incorrect password");
   }
 
-  const { accessToken, refreshToken } = await issueTokensForUser(user);
+  if (isLoginOtpRequired) {
+    if (!isMailConfigured()) {
+      throw createError(503, "Login OTP email is not configured");
+    }
 
-  const loginNotification = emitNotification(
-    req,
-    {
-      eventId: `user_logged_in_${user._id}_${Date.now()}`,
-      notificationType: "user_logged_in",
-      itemType: "account",
-      item: {
-        id: String(user._id),
-        title: user.username,
-      },
-      message: `Welcome back ${user.username}, you logged in successfully.`,
-    },
-    { userId: String(user._id) }
-  );
+    const otpExpiryMinutes =
+      Number.isFinite(LOGIN_OTP_MINUTES) && LOGIN_OTP_MINUTES > 0 ? LOGIN_OTP_MINUTES : 10;
+    const { otp, doc } = await createAndSaveOtp(user._id, otpExpiryMinutes, OTP_PURPOSES.LOGIN);
+    const emailResult = await sendLoginOtpEmail({
+      to: user.email,
+      username: user.username,
+      otp,
+      expiresInMinutes: otpExpiryMinutes,
+    });
 
-  return sendItem(res, {
-    user: user.toJSON(),
-    token: accessToken,
-    accessToken,
-    refreshToken,
-    message: "Login successful",
-    notification: loginNotification,
-  });
+    if (!emailResult?.sent) {
+      throw createError(503, "Could not send login OTP. Please try again.");
+    }
+
+    const responseData = {
+      requiresOtp: true,
+      loginOtpToken: signLoginOtpToken(user._id.toString(), otpExpiryMinutes),
+      expiresAt: doc.expiresAt,
+      message: "Login OTP sent. Verify it to complete sign in.",
+    };
+
+    if (process.env.NODE_ENV !== "production") {
+      responseData.loginOtp = otp;
+      console.info(`Login OTP for ${email}: ${otp}`);
+    }
+
+    return sendItem(res, responseData);
+  }
+
+  return sendItem(res, await buildLoginSuccessResponse(req, user));
+});
+
+export const verifyLoginOtp = asyncHandler(async (req, res) => {
+  if (!isLoginOtpRequired) {
+    throw createError(400, "Login OTP is not enabled");
+  }
+
+  const { loginOtpToken, otp } = normalizeLoginOtpVerificationPayload(req.body);
+
+  let payload;
+  try {
+    payload = verifyLoginOtpToken(loginOtpToken);
+  } catch (_error) {
+    throw createError(401, "Invalid or expired login OTP token");
+  }
+
+  if (!payload?.sub || payload?.type !== "login_otp") {
+    throw createError(401, "Invalid login OTP token payload");
+  }
+
+  const user = await User.findById(payload.sub);
+  if (!user) {
+    throw createError(404, "User does not exist");
+  }
+
+  const otpResult = await verifyOtpForUser(user._id, otp, OTP_PURPOSES.LOGIN);
+  if (!otpResult.valid) {
+    throw createError(400, "Invalid or expired login OTP");
+  }
+
+  return sendItem(res, await buildLoginSuccessResponse(req, user));
 });
 
 export const forgotPassword = asyncHandler(async (req, res) => {
@@ -430,7 +525,11 @@ export const forgotPassword = asyncHandler(async (req, res) => {
     Number.isFinite(PASSWORD_RESET_OTP_MINUTES) && PASSWORD_RESET_OTP_MINUTES > 0
       ? PASSWORD_RESET_OTP_MINUTES
       : 10;
-  const { otp, doc } = await createAndSaveOtp(user._id, otpExpiryMinutes);
+  const { otp, doc } = await createAndSaveOtp(
+    user._id,
+    otpExpiryMinutes,
+    OTP_PURPOSES.PASSWORD_RESET
+  );
 
   // Keep the old token fields clear so the OTP flow remains the single active reset method.
   user.passwordResetTokenHash = null;
@@ -480,7 +579,7 @@ export const resetPassword = asyncHandler(async (req, res) => {
       throw createError(400, "Invalid or expired OTP");
     }
 
-    const otpResult = await verifyOtpForUser(user._id, otp);
+    const otpResult = await verifyOtpForUser(user._id, otp, OTP_PURPOSES.PASSWORD_RESET);
     if (!otpResult.valid) {
       throw createError(400, "Invalid or expired OTP");
     }

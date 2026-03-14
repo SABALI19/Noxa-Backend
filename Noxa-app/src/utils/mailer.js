@@ -14,9 +14,14 @@ const getSmtpConfig = () => {
   const user = String(process.env.SMTP_USER || process.env.GMAIL_USER || "").trim();
   const pass = String(process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || "").trim();
   const secure = toBoolean(process.env.SMTP_SECURE, port === 465);
+  const rejectUnauthorized = toBoolean(process.env.SMTP_TLS_REJECT_UNAUTHORIZED, true);
 
   if (!host || !port || !user || !pass) {
     return null;
+  }
+
+  if (secure && port === 587) {
+    console.warn("SMTP_SECURE=true with port 587 is usually invalid. Use SMTP_SECURE=false for STARTTLS.");
   }
 
   return {
@@ -26,6 +31,9 @@ const getSmtpConfig = () => {
     auth: {
       user,
       pass,
+    },
+    tls: {
+      rejectUnauthorized,
     },
   };
 };
@@ -133,6 +141,60 @@ export const sendPasswordResetOtpEmail = async ({ to, username, otp, expiresInMi
         <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${safeOtp}</p>
         <p>This OTP expires in ${safeExpiry} minutes.</p>
         <p>If you did not request this, you can ignore this email.</p>
+        <p>Regards,<br/>Noxa Team</p>
+      </div>
+    `,
+  });
+
+  return {
+    sent: true,
+    skipped: false,
+  };
+};
+
+export const sendLoginOtpEmail = async ({ to, username, otp, expiresInMinutes = 10 }) => {
+  if (!isMailConfigured()) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "mail_not_configured",
+    };
+  }
+
+  const safeUsername = String(username || "there").trim() || "there";
+  const safeTo = String(to || "").trim().toLowerCase();
+  const safeOtp = String(otp || "").trim();
+  const safeExpiry = Number.isFinite(Number(expiresInMinutes)) ? Number(expiresInMinutes) : 10;
+
+  if (!safeTo) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "missing_recipient",
+    };
+  }
+
+  if (!safeOtp) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "missing_otp",
+    };
+  }
+
+  await transporter.sendMail({
+    from: fromAddress,
+    to: safeTo,
+    subject: "Noxa Login OTP",
+    text: `Hi ${safeUsername}, your Noxa login OTP is ${safeOtp}. It expires in ${safeExpiry} minutes.`,
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <h2>Login OTP</h2>
+        <p>Hi ${safeUsername},</p>
+        <p>Use this OTP to complete your Noxa login:</p>
+        <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${safeOtp}</p>
+        <p>This OTP expires in ${safeExpiry} minutes.</p>
+        <p>If you did not try to log in, you can ignore this email.</p>
         <p>Regards,<br/>Noxa Team</p>
       </div>
     `,

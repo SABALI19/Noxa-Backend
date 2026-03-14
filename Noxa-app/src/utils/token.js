@@ -18,8 +18,23 @@ export const signRefreshToken = (userId) => {
   });
 };
 
+export const signLoginOtpToken = (userId, expiresInMinutes = 10) => {
+  const safeMinutes =
+    Number.isFinite(Number(expiresInMinutes)) && Number(expiresInMinutes) > 0
+      ? Number(expiresInMinutes)
+      : 10;
+
+  return jwt.sign({ sub: userId, type: "login_otp" }, JWT_SECRET, {
+    expiresIn: `${safeMinutes}m`,
+  });
+};
+
 export const verifyRefreshToken = (token) => {
   return jwt.verify(token, JWT_REFRESH_SECRET);
+};
+
+export const verifyLoginOtpToken = (token) => {
+  return jwt.verify(token, JWT_SECRET);
 };
 
 export const getTokenExpiryDate = (token) => {
