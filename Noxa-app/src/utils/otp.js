@@ -4,6 +4,7 @@ import OtpToken from "../models/otp/otpToken.js";
 export const OTP_PURPOSES = Object.freeze({
   PASSWORD_RESET: "password_reset",
   LOGIN: "login",
+  EMAIL_VERIFICATION: "email_verification",
 });
 
 export const generateNumericOtp = () => {

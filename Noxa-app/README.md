@@ -37,6 +37,8 @@ npm run dev
 Base path: `/api/v1/users`
 
 - `POST /register` (signup)
+- `POST /signup/verify-email` (complete signup email confirmation)
+- `POST /signup/resend-verification` (send a new signup confirmation email)
 - `POST /login` (step 1: password check + email OTP)
 - `POST /login/verify-otp` (step 2: exchange OTP for tokens)
 - `POST /refresh`
@@ -52,6 +54,42 @@ Signup:
   "username": "samuel_01",
   "email": "samuel@email.com",
   "password": "strongpass123"
+}
+```
+
+Signup response when `SIGNUP_EMAIL_REQUIRED=true`:
+
+```json
+{
+  "data": {
+    "user": {
+      "_id": "user_id",
+      "username": "samuel_01",
+      "email": "samuel@email.com",
+      "emailVerified": false
+    },
+    "requiresEmailVerification": true,
+    "signupVerificationToken": "paste_token_from_response",
+    "expiresAt": "2026-03-15T10:00:00.000Z",
+    "message": "Signup successful. Verify your email to complete sign in."
+  }
+}
+```
+
+Verify signup email:
+
+```json
+{
+  "signupVerificationToken": "paste_token_from_signup_response",
+  "otp": "123456"
+}
+```
+
+Resend signup verification:
+
+```json
+{
+  "email": "samuel@email.com"
 }
 ```
 

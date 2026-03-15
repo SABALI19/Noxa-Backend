@@ -25,6 +25,14 @@ const userSchema = new Schema(
       trim: true,
       lowercase: true,
     },
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    emailVerifiedAt: {
+      type: Date,
+      default: null,
+    },
     avatar: {
       type: String,
       default: null,

@@ -98,6 +98,65 @@ export const sendAccountCreatedEmail = async ({ to, username }) => {
   };
 };
 
+export const sendSignupVerificationEmail = async ({
+  to,
+  username,
+  otp,
+  expiresInMinutes = 10,
+}) => {
+  if (!isMailConfigured()) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "mail_not_configured",
+    };
+  }
+
+  const safeUsername = String(username || "there").trim() || "there";
+  const safeTo = String(to || "").trim().toLowerCase();
+  const safeOtp = String(otp || "").trim();
+  const safeExpiry = Number.isFinite(Number(expiresInMinutes)) ? Number(expiresInMinutes) : 10;
+
+  if (!safeTo) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "missing_recipient",
+    };
+  }
+
+  if (!safeOtp) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "missing_otp",
+    };
+  }
+
+  await transporter.sendMail({
+    from: fromAddress,
+    to: safeTo,
+    subject: "Verify your Noxa email",
+    text: `Hi ${safeUsername}, your Noxa signup verification code is ${safeOtp}. It expires in ${safeExpiry} minutes.`,
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <h2>Verify your email</h2>
+        <p>Hi ${safeUsername},</p>
+        <p>Use this code to confirm your Noxa account email address:</p>
+        <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${safeOtp}</p>
+        <p>This code expires in ${safeExpiry} minutes.</p>
+        <p>If you did not create this account, you can ignore this email.</p>
+        <p>Regards,<br/>Noxa Team</p>
+      </div>
+    `,
+  });
+
+  return {
+    sent: true,
+    skipped: false,
+  };
+};
+
 export const sendPasswordResetOtpEmail = async ({ to, username, otp, expiresInMinutes = 10 }) => {
   if (!isMailConfigured()) {
     return {

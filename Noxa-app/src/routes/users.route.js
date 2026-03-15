@@ -7,11 +7,13 @@ import {
   logoutUser,
   refreshAuthToken,
   registerUser,
+  resendSignupVerification,
   resetPassword,
   subscribePushNotifications,
   updateCurrentUserProfile,
   unsubscribePushNotifications,
   verifyLoginOtp,
+  verifySignupEmail,
 } from "../controllers/users.controller.js";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { apiLimiter } from "../middlewares/rateLimiter.js";
@@ -20,6 +22,10 @@ const router = Router();
 
 router.post("/signup", registerUser);
 router.post("/register", registerUser);
+router.post("/signup/verify-email", apiLimiter, verifySignupEmail);
+router.post("/register/verify-email", apiLimiter, verifySignupEmail);
+router.post("/signup/resend-verification", apiLimiter, resendSignupVerification);
+router.post("/register/resend-verification", apiLimiter, resendSignupVerification);
 router.post("/login", apiLimiter, loginUser);
 router.post("/login/verify-otp", apiLimiter, verifyLoginOtp);
 router.post("/forgot-password", forgotPassword);
