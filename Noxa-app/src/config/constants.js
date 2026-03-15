@@ -6,6 +6,7 @@ export const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 export const JWT_REFRESH_SECRET =
   process.env.JWT_REFRESH_SECRET || "dev-only-refresh-secret-change-me";
 export const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || "30d";
+export const PUSH_ACTION_EXPIRES_IN = process.env.PUSH_ACTION_EXPIRES_IN || "12h";
 
 export const PRIORITY_VALUES = ["low", "medium", "high"];
 

@@ -4,6 +4,7 @@ import { Task } from "../models/task.model.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { createError, sendItem, sendList } from "../utils/http.js";
 import { emitNotification } from "../utils/emitNotification.js";
+import { verifyPushReminderActionToken } from "../utils/token.js";
 import {
   assertEnum,
   assertNonNegativeNumber,
@@ -99,6 +100,44 @@ const resolveReminderNotificationType = (beforeReminder, afterReminder) => {
   }
 
   return "reminder_updated";
+};
+
+const applyReminderSnooze = async ({ userId, reminderId, snoozeMinutes, req }) => {
+  assertObjectId(reminderId);
+
+  const reminder = await Reminder.findOne({ _id: reminderId, userId });
+  if (!reminder) {
+    throw createError(404, "Reminder not found");
+  }
+
+  assertNonNegativeNumber(snoozeMinutes, "snoozeMinutes");
+  if (snoozeMinutes <= 0) {
+    throw createError(400, "snoozeMinutes must be greater than 0");
+  }
+
+  const baseTime =
+    reminder.reminderTime && reminder.reminderTime > new Date() ? reminder.reminderTime : new Date();
+
+  reminder.reminderTime = new Date(baseTime.getTime() + snoozeMinutes * 60 * 1000);
+  reminder.status = "snoozed";
+  await reminder.save();
+
+  emitNotification(
+    req,
+    {
+      eventId: `reminder_snoozed_${reminder._id}_${Date.now()}`,
+      notificationType: "reminder_snoozed",
+      itemType: "reminder",
+      item: {
+        id: String(reminder._id),
+        title: reminder.title,
+        status: reminder.status,
+      },
+    },
+    { userId }
+  );
+
+  return reminder;
 };
 
 export const createReminder = asyncHandler(async (req, res) => {
@@ -217,41 +256,41 @@ export const deleteReminder = asyncHandler(async (req, res) => {
 });
 
 export const snoozeReminder = asyncHandler(async (req, res) => {
-  assertObjectId(req.params.id);
-
-  const reminder = await Reminder.findOne({ _id: req.params.id, userId: req.user.id });
-  if (!reminder) {
-    throw createError(404, "Reminder not found");
-  }
-
   const snoozeMinutes = req.body.snoozeMinutes ?? 10;
-  assertNonNegativeNumber(snoozeMinutes, "snoozeMinutes");
+  const reminder = await applyReminderSnooze({
+    userId: req.user.id,
+    reminderId: req.params.id,
+    snoozeMinutes,
+    req,
+  });
 
-  if (snoozeMinutes <= 0) {
-    throw createError(400, "snoozeMinutes must be greater than 0");
+  return sendItem(res, reminder);
+});
+
+export const snoozeReminderFromPushAction = asyncHandler(async (req, res) => {
+  const actionToken = String(req.body?.actionToken || "").trim();
+  if (!actionToken) {
+    throw createError(400, "actionToken is required");
   }
 
-  const baseTime =
-    reminder.reminderTime && reminder.reminderTime > new Date() ? reminder.reminderTime : new Date();
+  let payload;
+  try {
+    payload = verifyPushReminderActionToken(actionToken);
+  } catch {
+    throw createError(401, "Invalid or expired action token");
+  }
 
-  reminder.reminderTime = new Date(baseTime.getTime() + snoozeMinutes * 60 * 1000);
-  reminder.status = "snoozed";
-  await reminder.save();
+  if (payload?.type !== "push_reminder_action" || payload?.action !== "snooze" || !payload?.sub || !payload?.rid) {
+    throw createError(401, "Invalid push action token payload");
+  }
 
-  emitNotification(
+  const snoozeMinutes = req.body?.snoozeMinutes ?? 30;
+  const reminder = await applyReminderSnooze({
+    userId: String(payload.sub),
+    reminderId: String(payload.rid),
+    snoozeMinutes,
     req,
-    {
-      eventId: `reminder_snoozed_${reminder._id}_${Date.now()}`,
-      notificationType: "reminder_snoozed",
-      itemType: "reminder",
-      item: {
-        id: String(reminder._id),
-        title: reminder.title,
-        status: reminder.status,
-      },
-    },
-    { userId: req.user.id }
-  );
+  });
 
   return sendItem(res, reminder);
 });

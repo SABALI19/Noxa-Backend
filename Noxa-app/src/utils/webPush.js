@@ -1,6 +1,7 @@
 import webpush from "web-push";
 import { createError } from "./http.js";
 import { User } from "../models/user.model.js";
+import { signPushReminderActionToken } from "./token.js";
 
 const isConfigured = () =>
   Boolean(
@@ -90,11 +91,12 @@ export const removeUserPushSubscription = async (userId, endpoint) => {
   await user.save();
 };
 
-const buildPushTemplate = (payload) => {
+const buildPushTemplate = (payload, userId) => {
   const itemTitle = payload?.item?.title || "Activity update";
   const type = payload?.notificationType || "notification";
   const itemId = payload?.item?.id || null;
   const itemType = payload?.itemType || "system";
+  const reminderId = payload?.item?.reminderId || null;
 
   const templates = {
     account_created: { title: "Account Created", body: "Welcome to Noxa. Your account is ready." },
@@ -135,6 +137,20 @@ const buildPushTemplate = (payload) => {
   };
 
   const template = templates[type] || fallback;
+  const pushAction =
+    reminderId && userId
+      ? {
+          kind: "reminder_snooze",
+          endpoint: "/api/v1/reminders/push-actions/snooze",
+          reminderId,
+          token: signPushReminderActionToken({
+            userId: String(userId),
+            reminderId: String(reminderId),
+            action: "snooze",
+          }),
+        }
+      : null;
+
   return {
     title: template.title,
     body: template.body,
@@ -144,6 +160,7 @@ const buildPushTemplate = (payload) => {
       itemType,
       itemId,
       url: resolveUrl(),
+      pushAction,
     },
   };
 };
@@ -159,7 +176,7 @@ export const sendUserWebPushNotification = async (userId, payload) => {
     return;
   }
 
-  const pushPayload = JSON.stringify(buildPushTemplate(payload));
+  const pushPayload = JSON.stringify(buildPushTemplate(payload, userId));
   const expiredEndpoints = [];
 
   await Promise.all(

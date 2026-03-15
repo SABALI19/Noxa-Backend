@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import {
   JWT_EXPIRES_IN,
+  PUSH_ACTION_EXPIRES_IN,
   JWT_REFRESH_EXPIRES_IN,
   JWT_REFRESH_SECRET,
   JWT_SECRET,
@@ -16,6 +17,25 @@ export const signRefreshToken = (userId) => {
   return jwt.sign({ sub: userId, type: "refresh" }, JWT_REFRESH_SECRET, {
     expiresIn: JWT_REFRESH_EXPIRES_IN,
   });
+};
+
+export const signPushReminderActionToken = ({
+  userId,
+  reminderId,
+  action = "snooze",
+}) => {
+  return jwt.sign(
+    {
+      sub: userId,
+      rid: reminderId,
+      type: "push_reminder_action",
+      action,
+    },
+    JWT_SECRET,
+    {
+      expiresIn: PUSH_ACTION_EXPIRES_IN,
+    }
+  );
 };
 
 const resolveOtpMinutes = (expiresInMinutes, fallback = 10) => {
@@ -64,6 +84,10 @@ export const verifySignupOtpToken = (token) => {
 };
 
 export const verifyVerifiedSignupToken = (token) => {
+  return jwt.verify(token, JWT_SECRET);
+};
+
+export const verifyPushReminderActionToken = (token) => {
   return jwt.verify(token, JWT_SECRET);
 };
 
