@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import OtpToken from "../models/otp/otpToken.js";
 
+
 export const OTP_PURPOSES = Object.freeze({
   PASSWORD_RESET: "password_reset",
   LOGIN: "login",

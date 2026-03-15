@@ -1,16 +1,20 @@
 import crypto from "node:crypto";
+import bcrypt from "bcrypt";
 import { User } from "../models/user.model.js";
+import { SignupVerification } from "../models/signupVerification.model.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { createError, sendItem } from "../utils/http.js";
 import {
   getTokenExpiryDate,
   signSignupOtpToken,
+  signVerifiedSignupToken,
   signLoginOtpToken,
   signAccessToken,
   signRefreshToken,
   verifyLoginOtpToken,
   verifyRefreshToken,
   verifySignupOtpToken,
+  verifyVerifiedSignupToken,
 } from "../utils/token.js";
 import { assertRequired } from "../utils/validation.js";
 import {
@@ -20,12 +24,13 @@ import {
 } from "../utils/webPush.js";
 import {
   isMailConfigured,
+  sendAccountCreatedEmail,
   sendLoginOtpEmail,
   sendPasswordResetOtpEmail,
   sendSignupVerificationEmail,
 } from "../utils/mailer.js";
 import { emitNotification } from "../utils/emitNotification.js";
-import { createAndSaveOtp, OTP_PURPOSES, verifyOtpForUser } from "../utils/otp.js";
+import { createAndSaveOtp, generateNumericOtp, OTP_PURPOSES, verifyOtpForUser } from "../utils/otp.js";
 
 const USERNAME_REGEX = /^[a-z0-9_]+$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -51,6 +56,10 @@ const LOGIN_OTP_MINUTES = Number.parseInt(
 );
 const SIGNUP_OTP_MINUTES = Number.parseInt(
   process.env.SIGNUP_OTP_EXPIRY_MINUTES || process.env.OTP_EXPIRY_MINUTES || "10",
+  10
+);
+const VERIFIED_SIGNUP_TOKEN_MINUTES = Number.parseInt(
+  process.env.SIGNUP_VERIFIED_TOKEN_EXPIRY_MINUTES || "30",
   10
 );
 const isSignupEmailRequired =
@@ -239,6 +248,22 @@ const normalizeSignupOtpVerificationPayload = (payload) => {
   return { signupVerificationToken, otp };
 };
 
+const normalizeVerifiedSignupTokenPayload = (payload) => {
+  if (!payload || typeof payload !== "object") {
+    throw createError(400, "Request body is required");
+  }
+
+  const verifiedSignupToken = String(
+    payload.verifiedSignupToken || payload.emailVerificationToken || payload.verificationToken || ""
+  ).trim();
+
+  if (!verifiedSignupToken) {
+    throw createError(400, "verifiedSignupToken is required");
+  }
+
+  return { verifiedSignupToken };
+};
+
 const normalizeForgotPasswordPayload = (payload) => {
   assertRequired(payload, ["email"]);
 
@@ -250,30 +275,83 @@ const normalizeForgotPasswordPayload = (payload) => {
   return { email };
 };
 
-const buildSignupVerificationChallenge = async (user) => {
+const buildPendingSignupVerification = async (email) => {
   const otpExpiryMinutes =
     Number.isFinite(SIGNUP_OTP_MINUTES) && SIGNUP_OTP_MINUTES > 0 ? SIGNUP_OTP_MINUTES : 10;
-  const { otp, doc } = await createAndSaveOtp(
-    user._id,
-    otpExpiryMinutes,
-    OTP_PURPOSES.EMAIL_VERIFICATION
-  );
+  const safeEmail = String(email || "").trim().toLowerCase();
+  const otp = generateNumericOtp();
+  const otpHash = await bcrypt.hash(otp, 10);
+  const expiresAt = new Date(Date.now() + otpExpiryMinutes * 60 * 1000);
+
+  await SignupVerification.updateMany({ email: safeEmail, consumedAt: null }, { consumedAt: new Date() });
+
+  await SignupVerification.create({
+    email: safeEmail,
+    otpHash,
+    expiresAt,
+  });
 
   return {
     otp,
-    expiresAt: doc.expiresAt,
-    signupVerificationToken: signSignupOtpToken(user._id.toString(), otpExpiryMinutes),
+    expiresAt,
+    signupVerificationToken: signSignupOtpToken(safeEmail, otpExpiryMinutes),
     expiresInMinutes: otpExpiryMinutes,
   };
 };
 
-const sendSignupVerificationChallengeEmail = async (user, challenge) => {
+const sendPendingSignupVerificationEmail = async (email, challenge) => {
+  const username = email.includes("@") ? email.split("@")[0] : "there";
+
   return sendSignupVerificationEmail({
-    to: user.email,
-    username: user.username,
+    to: email,
+    username,
     otp: challenge.otp,
     expiresInMinutes: challenge.expiresInMinutes,
   });
+};
+
+const findActiveSignupVerification = async (email) => {
+  return SignupVerification.findOne({
+    email: String(email || "").trim().toLowerCase(),
+    consumedAt: null,
+  }).sort({ createdAt: -1 });
+};
+
+const verifyPendingSignupOtp = async (email, otp, maxAttempts = 5) => {
+  const safeEmail = String(email || "").trim().toLowerCase();
+  const safeOtp = String(otp || "").trim();
+
+  if (!safeOtp) {
+    return { valid: false, reason: "missing_otp" };
+  }
+
+  const verification = await findActiveSignupVerification(safeEmail);
+  if (!verification) {
+    return { valid: false, reason: "verification_not_found" };
+  }
+
+  if (verification.expiresAt.getTime() <= Date.now()) {
+    verification.consumedAt = new Date();
+    await verification.save();
+    return { valid: false, reason: "verification_expired" };
+  }
+
+  const matches = await bcrypt.compare(safeOtp, verification.otpHash);
+  if (!matches) {
+    verification.attempts += 1;
+    if (verification.attempts >= maxAttempts) {
+      verification.consumedAt = new Date();
+    }
+
+    await verification.save();
+    return { valid: false, reason: "verification_invalid" };
+  }
+
+  verification.verifiedAt = new Date();
+  verification.attempts += 1;
+  await verification.save();
+
+  return { valid: true, verification };
 };
 
 const normalizeResetPasswordPayload = (payload) => {
@@ -387,12 +465,75 @@ const normalizeProfileUpdatePayload = (payload) => {
   return updates;
 };
 
+export const requestSignupVerification = asyncHandler(async (req, res) => {
+  if (!isSignupEmailRequired) {
+    throw createError(400, "Signup email verification is not enabled");
+  }
+
+  if (!isMailConfigured()) {
+    throw createError(503, "Signup confirmation email is not configured");
+  }
+
+  const { email } = normalizeForgotPasswordPayload(req.body);
+  const existingUser = await User.findOne({ email }).select("_id");
+  if (existingUser) {
+    throw createError(409, "Email already exists");
+  }
+
+  const challenge = await buildPendingSignupVerification(email);
+  const emailResult = await sendPendingSignupVerificationEmail(email, challenge);
+
+  if (!emailResult?.sent) {
+    throw createError(503, "Could not send confirmation email. Please try again.");
+  }
+
+  const responseData = {
+    requiresEmailVerification: true,
+    signupVerificationToken: challenge.signupVerificationToken,
+    expiresAt: challenge.expiresAt,
+    confirmationEmailSent: true,
+    message: "Confirmation email sent. Verify it before completing signup.",
+  };
+
+  if (process.env.NODE_ENV !== "production") {
+    responseData.signupOtp = challenge.otp;
+    console.info(`Signup verification OTP for ${email}: ${challenge.otp}`);
+  }
+
+  return sendItem(res, responseData);
+});
+
 export const registerUser = asyncHandler(async (req, res) => {
   const { username, name, email, password } = normalizeSignupPayload(req.body);
   const signupEmailConfigured = isMailConfigured();
+  let verifiedSignupRecord = null;
 
-  if (isSignupEmailRequired && !signupEmailConfigured) {
-    throw createError(503, "Signup confirmation email is not configured");
+  if (isSignupEmailRequired) {
+    if (!signupEmailConfigured) {
+      throw createError(503, "Signup confirmation email is not configured");
+    }
+
+    const { verifiedSignupToken } = normalizeVerifiedSignupTokenPayload(req.body);
+
+    let payload;
+    try {
+      payload = verifyVerifiedSignupToken(verifiedSignupToken);
+    } catch (_error) {
+      throw createError(401, "Invalid or expired verified signup token");
+    }
+
+    if (!payload?.email || payload?.type !== "signup_verified") {
+      throw createError(401, "Invalid verified signup token payload");
+    }
+
+    if (payload.email !== email) {
+      throw createError(400, "Verified email does not match signup email");
+    }
+
+    verifiedSignupRecord = await findActiveSignupVerification(email);
+    if (!verifiedSignupRecord?.verifiedAt) {
+      throw createError(401, "Email must be verified before signup");
+    }
   }
 
   const existing = await User.findOne({
@@ -410,8 +551,8 @@ export const registerUser = asyncHandler(async (req, res) => {
       name,
       email,
       password,
-      emailVerified: !signupEmailConfigured,
-      emailVerifiedAt: signupEmailConfigured ? null : new Date(),
+      emailVerified: true,
+      emailVerifiedAt: isSignupEmailRequired ? verifiedSignupRecord?.verifiedAt || new Date() : new Date(),
     });
   } catch (error) {
     if (isDuplicateKeyError(error)) {
@@ -421,42 +562,17 @@ export const registerUser = asyncHandler(async (req, res) => {
     throw error;
   }
 
-  let confirmationEmailSent = false;
-  let confirmationEmailQueued = false;
-  let signupVerificationChallenge = null;
-
-  if (signupEmailConfigured) {
-    signupVerificationChallenge = await buildSignupVerificationChallenge(user);
+  if (verifiedSignupRecord) {
+    verifiedSignupRecord.consumedAt = new Date();
+    await verifiedSignupRecord.save();
   }
 
-  if (isSignupEmailRequired && signupVerificationChallenge) {
-    try {
-      const emailResult = await sendSignupVerificationChallengeEmail(user, signupVerificationChallenge);
-      confirmationEmailSent = Boolean(emailResult?.sent);
+  const { accessToken, refreshToken } = await issueTokensForUser(user);
 
-      if (!emailResult?.sent) {
-        throw createError(503, "Could not send confirmation email. Please try again.");
-      }
-    } catch (error) {
+  if (signupEmailConfigured && !isSignupEmailRequired) {
+    void sendAccountCreatedEmail({ to: user.email, username: user.username }).catch((error) => {
       console.error("Failed to send account creation email:", error.message);
-      await User.findByIdAndDelete(user._id);
-      if (error?.statusCode) {
-        throw error;
-      }
-      throw createError(503, "Could not send confirmation email. Please try again.");
-    }
-  } else if (signupVerificationChallenge) {
-    // Non-blocking mode: do not delay signup response on SMTP latency.
-    confirmationEmailQueued = true;
-    void sendSignupVerificationChallengeEmail(user, signupVerificationChallenge)
-      .then((emailResult) => {
-        if (!emailResult?.sent && !emailResult?.skipped) {
-          console.warn("Could not send signup confirmation email (non-blocking mode).");
-        }
-      })
-      .catch((error) => {
-        console.error("Failed to send account creation email:", error.message);
-      });
+    });
   }
 
   const signupNotification = emitNotification(
@@ -474,50 +590,18 @@ export const registerUser = asyncHandler(async (req, res) => {
     { userId: String(user._id) }
   );
 
-  if (isSignupEmailRequired && signupVerificationChallenge) {
-    const responseData = {
+  return sendItem(
+    res,
+    {
       user: user.toJSON(),
-      requiresEmailVerification: true,
-      signupVerificationToken: signupVerificationChallenge.signupVerificationToken,
-      expiresAt: signupVerificationChallenge.expiresAt,
-      confirmationEmailSent,
-      confirmationEmailQueued,
-      message: "Signup successful. Verify your email to complete sign in.",
+      token: accessToken,
+      accessToken,
+      refreshToken,
+      message: "Signup successful",
       notification: signupNotification,
-    };
-
-    if (process.env.NODE_ENV !== "production") {
-      responseData.signupOtp = signupVerificationChallenge.otp;
-      console.info(`Signup verification OTP for ${email}: ${signupVerificationChallenge.otp}`);
-    }
-
-    return sendItem(res, responseData, 201);
-  }
-
-  const { accessToken, refreshToken } = await issueTokensForUser(user);
-  const responseData = {
-    user: user.toJSON(),
-    token: accessToken,
-    accessToken,
-    refreshToken,
-    confirmationEmailSent,
-    confirmationEmailQueued,
-    message: "Signup successful",
-    notification: signupNotification,
-  };
-
-  if (signupVerificationChallenge) {
-    responseData.signupVerificationToken = signupVerificationChallenge.signupVerificationToken;
-    responseData.requiresEmailVerification = true;
-    responseData.expiresAt = signupVerificationChallenge.expiresAt;
-
-    if (process.env.NODE_ENV !== "production") {
-      responseData.signupOtp = signupVerificationChallenge.otp;
-      console.info(`Signup verification OTP for ${email}: ${signupVerificationChallenge.otp}`);
-    }
-  }
-
-  return sendItem(res, responseData, 201);
+    },
+    201
+  );
 });
 
 export const loginUser = asyncHandler(async (req, res) => {
@@ -533,30 +617,7 @@ export const loginUser = asyncHandler(async (req, res) => {
   }
 
   if (isSignupEmailRequired && !user.emailVerified) {
-    if (!isMailConfigured()) {
-      throw createError(503, "Signup confirmation email is not configured");
-    }
-
-    const signupVerificationChallenge = await buildSignupVerificationChallenge(user);
-    const emailResult = await sendSignupVerificationChallengeEmail(user, signupVerificationChallenge);
-
-    if (!emailResult?.sent) {
-      throw createError(503, "Could not send confirmation email. Please try again.");
-    }
-
-    const responseData = {
-      requiresEmailVerification: true,
-      signupVerificationToken: signupVerificationChallenge.signupVerificationToken,
-      expiresAt: signupVerificationChallenge.expiresAt,
-      message: "Email not verified. We sent a new confirmation code.",
-    };
-
-    if (process.env.NODE_ENV !== "production") {
-      responseData.signupOtp = signupVerificationChallenge.otp;
-      console.info(`Signup verification OTP for ${email}: ${signupVerificationChallenge.otp}`);
-    }
-
-    return sendItem(res, responseData, 403);
+    throw createError(403, "Email not verified");
   }
 
   if (isLoginOtpRequired) {
@@ -597,6 +658,10 @@ export const loginUser = asyncHandler(async (req, res) => {
 });
 
 export const verifySignupEmail = asyncHandler(async (req, res) => {
+  if (!isSignupEmailRequired) {
+    throw createError(400, "Signup email verification is not enabled");
+  }
+
   const { signupVerificationToken, otp } = normalizeSignupOtpVerificationPayload(req.body);
 
   let payload;
@@ -606,75 +671,65 @@ export const verifySignupEmail = asyncHandler(async (req, res) => {
     throw createError(401, "Invalid or expired signup verification token");
   }
 
-  if (!payload?.sub || payload?.type !== "signup_otp") {
+  if (!payload?.email || payload?.type !== "signup_otp") {
     throw createError(401, "Invalid signup verification token payload");
   }
 
-  const user = await User.findById(payload.sub);
-  if (!user) {
-    throw createError(404, "User does not exist");
-  }
-
-  if (user.emailVerified) {
-    return sendItem(res, {
-      user: user.toJSON(),
-      message: "Email already verified",
-    });
-  }
-
-  const otpResult = await verifyOtpForUser(user._id, otp, OTP_PURPOSES.EMAIL_VERIFICATION);
-  if (!otpResult.valid) {
+  const otpResult = await verifyPendingSignupOtp(payload.email, otp);
+  if (!otpResult.valid || !otpResult.verification) {
     throw createError(400, "Invalid or expired signup OTP");
   }
 
-  user.emailVerified = true;
-  user.emailVerifiedAt = new Date();
-  await user.save();
-
-  const { accessToken, refreshToken } = await issueTokensForUser(user);
+  const verifiedSignupToken = signVerifiedSignupToken(
+    payload.email,
+    otpResult.verification.verifiedAt
+      ? Number.isFinite(VERIFIED_SIGNUP_TOKEN_MINUTES) && VERIFIED_SIGNUP_TOKEN_MINUTES > 0
+        ? VERIFIED_SIGNUP_TOKEN_MINUTES
+        : 30
+      : 30
+  );
 
   return sendItem(res, {
-    user: user.toJSON(),
-    token: accessToken,
-    accessToken,
-    refreshToken,
-    message: "Email verified successfully",
+    email: payload.email,
+    verifiedSignupToken,
+    expiresAt: getTokenExpiryDate(verifiedSignupToken),
+    message: "Email verified. Complete signup to create your account.",
   });
 });
 
 export const resendSignupVerification = asyncHandler(async (req, res) => {
-  const { email } = normalizeForgotPasswordPayload(req.body);
+  if (!isSignupEmailRequired) {
+    throw createError(400, "Signup email verification is not enabled");
+  }
 
   if (!isMailConfigured()) {
     throw createError(503, "Signup confirmation email is not configured");
   }
 
-  const user = await User.findOne({ email });
-  if (!user) {
-    throw createError(404, "User does not exist");
+  const { email } = normalizeForgotPasswordPayload(req.body);
+  const existingUser = await User.findOne({ email }).select("_id");
+  if (existingUser) {
+    throw createError(409, "Email already exists");
   }
 
-  if (user.emailVerified) {
-    throw createError(400, "Email is already verified");
-  }
-
-  const signupVerificationChallenge = await buildSignupVerificationChallenge(user);
-  const emailResult = await sendSignupVerificationChallengeEmail(user, signupVerificationChallenge);
+  const challenge = await buildPendingSignupVerification(email);
+  const emailResult = await sendPendingSignupVerificationEmail(email, challenge);
 
   if (!emailResult?.sent) {
     throw createError(503, "Could not send confirmation email. Please try again.");
   }
 
   const responseData = {
-    signupVerificationToken: signupVerificationChallenge.signupVerificationToken,
-    expiresAt: signupVerificationChallenge.expiresAt,
+    requiresEmailVerification: true,
+    signupVerificationToken: challenge.signupVerificationToken,
+    expiresAt: challenge.expiresAt,
     confirmationEmailSent: true,
-    message: "Confirmation email sent",
+    message: "Confirmation email sent. Verify it before completing signup.",
   };
 
   if (process.env.NODE_ENV !== "production") {
-    responseData.signupOtp = signupVerificationChallenge.otp;
-    console.info(`Signup verification OTP for ${email}: ${signupVerificationChallenge.otp}`);
+    responseData.signupOtp = challenge.otp;
+    console.info(`Signup verification OTP for ${email}: ${challenge.otp}`);
   }
 
   return sendItem(res, responseData);
@@ -883,13 +938,7 @@ export const updateCurrentUserProfile = asyncHandler(async (req, res) => {
     }
   }
 
-  const isEmailChange = Boolean(updates.email && updates.email !== user.email);
   Object.assign(user, updates);
-
-  if (isEmailChange && isSignupEmailRequired) {
-    user.emailVerified = false;
-    user.emailVerifiedAt = null;
-  }
 
   try {
     await user.save();

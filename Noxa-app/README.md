@@ -37,8 +37,9 @@ npm run dev
 Base path: `/api/v1/users`
 
 - `POST /register` (signup)
-- `POST /signup/verify-email` (complete signup email confirmation)
-- `POST /signup/resend-verification` (send a new signup confirmation email)
+- `POST /signup/request-verification` (send signup email confirmation OTP before account creation)
+- `POST /signup/verify-email` (verify signup email OTP and receive a verified signup token)
+- `POST /signup/resend-verification` (send a fresh signup email confirmation OTP)
 - `POST /login` (step 1: password check + email OTP)
 - `POST /login/verify-otp` (step 2: exchange OTP for tokens)
 - `POST /refresh`
@@ -47,31 +48,23 @@ Base path: `/api/v1/users`
 
 ### 4) Request bodies
 
-Signup:
+Request signup verification:
 
 ```json
 {
-  "username": "samuel_01",
-  "email": "samuel@email.com",
-  "password": "strongpass123"
+  "email": "samuel@email.com"
 }
 ```
 
-Signup response when `SIGNUP_EMAIL_REQUIRED=true`:
+Request verification response when `SIGNUP_EMAIL_REQUIRED=true`:
 
 ```json
 {
   "data": {
-    "user": {
-      "_id": "user_id",
-      "username": "samuel_01",
-      "email": "samuel@email.com",
-      "emailVerified": false
-    },
     "requiresEmailVerification": true,
     "signupVerificationToken": "paste_token_from_response",
     "expiresAt": "2026-03-15T10:00:00.000Z",
-    "message": "Signup successful. Verify your email to complete sign in."
+    "message": "Confirmation email sent. Verify it before completing signup."
   }
 }
 ```
@@ -80,8 +73,32 @@ Verify signup email:
 
 ```json
 {
-  "signupVerificationToken": "paste_token_from_signup_response",
+  "signupVerificationToken": "paste_token_from_request_response",
   "otp": "123456"
+}
+```
+
+Verify signup email response:
+
+```json
+{
+  "data": {
+    "email": "samuel@email.com",
+    "verifiedSignupToken": "paste_verified_signup_token",
+    "expiresAt": "2026-03-15T10:30:00.000Z",
+    "message": "Email verified. Complete signup to create your account."
+  }
+}
+```
+
+Signup:
+
+```json
+{
+  "verifiedSignupToken": "paste_verified_signup_token",
+  "username": "samuel_01",
+  "email": "samuel@email.com",
+  "password": "strongpass123"
 }
 ```
 

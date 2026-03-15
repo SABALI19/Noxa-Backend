@@ -5,6 +5,7 @@ import {
   getCurrentUser,
   loginUser,
   logoutUser,
+  requestSignupVerification,
   refreshAuthToken,
   registerUser,
   resendSignupVerification,
@@ -20,6 +21,8 @@ import { apiLimiter } from "../middlewares/rateLimiter.js";
 
 const router = Router();
 
+router.post("/signup/request-verification", apiLimiter, requestSignupVerification);
+router.post("/register/request-verification", apiLimiter, requestSignupVerification);
 router.post("/signup", registerUser);
 router.post("/register", registerUser);
 router.post("/signup/verify-email", apiLimiter, verifySignupEmail);

@@ -18,24 +18,35 @@ export const signRefreshToken = (userId) => {
   });
 };
 
-export const signLoginOtpToken = (userId, expiresInMinutes = 10) => {
+const resolveOtpMinutes = (expiresInMinutes, fallback = 10) => {
   const safeMinutes =
     Number.isFinite(Number(expiresInMinutes)) && Number(expiresInMinutes) > 0
       ? Number(expiresInMinutes)
-      : 10;
+      : fallback;
+
+  return safeMinutes;
+};
+
+export const signLoginOtpToken = (userId, expiresInMinutes = 10) => {
+  const safeMinutes = resolveOtpMinutes(expiresInMinutes);
 
   return jwt.sign({ sub: userId, type: "login_otp" }, JWT_SECRET, {
     expiresIn: `${safeMinutes}m`,
   });
 };
 
-export const signSignupOtpToken = (userId, expiresInMinutes = 10) => {
-  const safeMinutes =
-    Number.isFinite(Number(expiresInMinutes)) && Number(expiresInMinutes) > 0
-      ? Number(expiresInMinutes)
-      : 10;
+export const signSignupOtpToken = (email, expiresInMinutes = 10) => {
+  const safeMinutes = resolveOtpMinutes(expiresInMinutes);
 
-  return jwt.sign({ sub: userId, type: "signup_otp" }, JWT_SECRET, {
+  return jwt.sign({ email, type: "signup_otp" }, JWT_SECRET, {
+    expiresIn: `${safeMinutes}m`,
+  });
+};
+
+export const signVerifiedSignupToken = (email, expiresInMinutes = 30) => {
+  const safeMinutes = resolveOtpMinutes(expiresInMinutes, 30);
+
+  return jwt.sign({ email, type: "signup_verified" }, JWT_SECRET, {
     expiresIn: `${safeMinutes}m`,
   });
 };
@@ -49,6 +60,10 @@ export const verifyLoginOtpToken = (token) => {
 };
 
 export const verifySignupOtpToken = (token) => {
+  return jwt.verify(token, JWT_SECRET);
+};
+
+export const verifyVerifiedSignupToken = (token) => {
   return jwt.verify(token, JWT_SECRET);
 };
 
