@@ -1,7 +1,14 @@
 import crypto from "node:crypto";
 import bcrypt from "bcrypt";
 import { User } from "../models/user.model.js";
+import { Goal } from "../models/goal.model.js";
+import { Task } from "../models/task.model.js";
+import { Reminder } from "../models/reminder.model.js";
+import { Note } from "../models/note.model.js";
+import { TrackingEvent } from "../models/trackingEvent.model.js";
+import { AiChatHistory } from "../models/aiChatHistory.model.js";
 import { SignupVerification } from "../models/signupVerification.model.js";
+import OtpToken from "../models/otp/otpToken.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { createError, sendItem } from "../utils/http.js";
 import {
@@ -310,6 +317,19 @@ const sendPendingSignupVerificationEmail = async (email, challenge) => {
   });
 };
 
+const resolveSignupVerificationTarget = async (email) => {
+  const existingUser = await User.findOne({ email }).select("_id username email emailVerified");
+
+  if (existingUser?.emailVerified) {
+    throw createError(409, "Email already exists");
+  }
+
+  return {
+    existingUser,
+    isExistingUnverifiedUser: Boolean(existingUser && !existingUser.emailVerified),
+  };
+};
+
 const findActiveSignupVerification = async (email) => {
   return SignupVerification.findOne({
     email: String(email || "").trim().toLowerCase(),
@@ -475,10 +495,7 @@ export const requestSignupVerification = asyncHandler(async (req, res) => {
   }
 
   const { email } = normalizeForgotPasswordPayload(req.body);
-  const existingUser = await User.findOne({ email }).select("_id");
-  if (existingUser) {
-    throw createError(409, "Email already exists");
-  }
+  const { isExistingUnverifiedUser } = await resolveSignupVerificationTarget(email);
 
   const challenge = await buildPendingSignupVerification(email);
   const emailResult = await sendPendingSignupVerificationEmail(email, challenge);
@@ -492,7 +509,10 @@ export const requestSignupVerification = asyncHandler(async (req, res) => {
     signupVerificationToken: challenge.signupVerificationToken,
     expiresAt: challenge.expiresAt,
     confirmationEmailSent: true,
-    message: "Confirmation email sent. Verify it before completing signup.",
+    existingAccount: isExistingUnverifiedUser,
+    message: isExistingUnverifiedUser
+      ? "Confirmation email sent. Verify it to activate your existing account."
+      : "Confirmation email sent. Verify it before completing signup.",
   };
 
   if (process.env.NODE_ENV !== "production") {
@@ -680,6 +700,27 @@ export const verifySignupEmail = asyncHandler(async (req, res) => {
     throw createError(400, "Invalid or expired signup OTP");
   }
 
+  const existingUnverifiedUser = await User.findOne({
+    email: payload.email,
+    emailVerified: false,
+  });
+
+  if (existingUnverifiedUser) {
+    existingUnverifiedUser.emailVerified = true;
+    existingUnverifiedUser.emailVerifiedAt = otpResult.verification.verifiedAt || new Date();
+    await existingUnverifiedUser.save();
+
+    otpResult.verification.consumedAt = new Date();
+    await otpResult.verification.save();
+
+    return sendItem(res, {
+      email: payload.email,
+      existingAccountVerified: true,
+      canLogin: true,
+      message: "Email verified. You can now sign in to your existing account.",
+    });
+  }
+
   const verifiedSignupToken = signVerifiedSignupToken(
     payload.email,
     otpResult.verification.verifiedAt
@@ -707,10 +748,7 @@ export const resendSignupVerification = asyncHandler(async (req, res) => {
   }
 
   const { email } = normalizeForgotPasswordPayload(req.body);
-  const existingUser = await User.findOne({ email }).select("_id");
-  if (existingUser) {
-    throw createError(409, "Email already exists");
-  }
+  const { isExistingUnverifiedUser } = await resolveSignupVerificationTarget(email);
 
   const challenge = await buildPendingSignupVerification(email);
   const emailResult = await sendPendingSignupVerificationEmail(email, challenge);
@@ -724,7 +762,10 @@ export const resendSignupVerification = asyncHandler(async (req, res) => {
     signupVerificationToken: challenge.signupVerificationToken,
     expiresAt: challenge.expiresAt,
     confirmationEmailSent: true,
-    message: "Confirmation email sent. Verify it before completing signup.",
+    existingAccount: isExistingUnverifiedUser,
+    message: isExistingUnverifiedUser
+      ? "Confirmation email sent. Verify it to activate your existing account."
+      : "Confirmation email sent. Verify it before completing signup.",
   };
 
   if (process.env.NODE_ENV !== "production") {
@@ -970,6 +1011,34 @@ export const updateCurrentUserProfile = asyncHandler(async (req, res) => {
     user: user.toJSON(),
     message: "Profile updated successfully",
     notification: profileNotification,
+  });
+});
+
+export const deleteCurrentUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id);
+  if (!user) {
+    throw createError(404, "User not found");
+  }
+
+  const userId = user._id;
+  const userEmail = user.email;
+
+  await Promise.all([
+    Goal.deleteMany({ userId }),
+    Task.deleteMany({ userId }),
+    Reminder.deleteMany({ userId }),
+    Note.deleteMany({ userId }),
+    TrackingEvent.deleteMany({ userId }),
+    AiChatHistory.deleteMany({ userId }),
+    OtpToken.deleteMany({ userId }),
+    SignupVerification.deleteMany({ email: userEmail }),
+  ]);
+
+  await user.deleteOne();
+
+  return sendItem(res, {
+    deleted: true,
+    message: "Account deleted successfully.",
   });
 });
 

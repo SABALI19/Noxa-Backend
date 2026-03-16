@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  deleteCurrentUser,
   forgotPassword,
   getPushPublicKey,
   getCurrentUser,
@@ -40,5 +41,6 @@ router.post("/push/subscribe", authMiddleware, subscribePushNotifications);
 router.post("/push/unsubscribe", authMiddleware, unsubscribePushNotifications);
 router.get("/me", authMiddleware, getCurrentUser);
 router.patch("/me", authMiddleware, updateCurrentUserProfile);
+router.delete("/me", authMiddleware, deleteCurrentUser);
 
 export default router;
