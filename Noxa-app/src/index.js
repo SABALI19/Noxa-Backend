@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./config/loadEnv.js";
 import { createServer } from 'http';
 import jwt from "jsonwebtoken";
 import { Server } from 'socket.io';
