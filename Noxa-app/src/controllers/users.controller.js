@@ -157,17 +157,29 @@ const buildLoginSuccessResponse = async (req, user) => {
   };
 };
 
+const normalizeUsernameValue = (value, fallback = "user") => {
+  const normalized = String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+
+  const safeValue = normalized || fallback;
+  if (safeValue.length >= 3) {
+    return safeValue.slice(0, 30);
+  }
+
+  return `${safeValue}${fallback}`.slice(0, 30);
+};
+
 const normalizeSignupPayload = (payload) => {
   assertRequired(payload, ["email", "password"]);
 
-  const usernameInput = payload.username ?? payload.name;
-  if (!usernameInput) {
-    throw createError(400, "username or name is required");
-  }
-
-  const username = String(usernameInput).toLowerCase().trim().replace(/\s+/g, "_");
-  const name = String(payload.name ?? usernameInput ?? "").trim().slice(0, 80);
   const email = String(payload.email).toLowerCase().trim();
+  const usernameInput = payload.username ?? payload.name ?? email.split("@")[0];
+  const username = normalizeUsernameValue(usernameInput);
+  const name = String(payload.name ?? "").trim().slice(0, 80);
   const password = String(payload.password);
   const confirmPassword =
     payload.confirmPassword === undefined || payload.confirmPassword === null
@@ -201,20 +213,49 @@ const normalizeSignupPayload = (payload) => {
     throw createError(400, "password confirmation does not match");
   }
 
-  return { username, name, email, password };
+  return {
+    username,
+    name,
+    email,
+    password,
+    usernameWasProvided: Boolean(payload.username ?? payload.name),
+  };
 };
 
 const normalizeLoginPayload = (payload) => {
-  assertRequired(payload, ["email", "password"]);
-
-  const email = String(payload.email).toLowerCase().trim();
-  const password = String(payload.password);
-
-  if (!EMAIL_REGEX.test(email)) {
-    throw createError(400, "email must be a valid email address");
+  const rawIdentifier = payload?.identifier ?? payload?.email ?? payload?.username;
+  if (rawIdentifier === undefined || rawIdentifier === null || String(rawIdentifier).trim() === "") {
+    throw createError(400, "email or username is required");
   }
 
-  return { email, password };
+  if (payload?.password === undefined || payload?.password === null) {
+    throw createError(400, "password is required");
+  }
+
+  const identifier = String(rawIdentifier).trim();
+  const email = identifier.toLowerCase();
+  const username = identifier.toLowerCase().replace(/\s+/g, "_");
+  const password = String(payload.password);
+
+  if (!EMAIL_REGEX.test(email) && !USERNAME_REGEX.test(username)) {
+    throw createError(400, "email or username is invalid");
+  }
+
+  return { email, username, password };
+};
+
+const resolveAvailableUsername = async (candidate) => {
+  const baseUsername = normalizeUsernameValue(candidate);
+  let nextUsername = baseUsername;
+  let suffix = 1;
+
+  while (await User.exists({ username: nextUsername })) {
+    const suffixText = `_${suffix}`;
+    nextUsername = `${baseUsername.slice(0, Math.max(3, 30 - suffixText.length))}${suffixText}`;
+    suffix += 1;
+  }
+
+  return nextUsername;
 };
 
 const BCRYPT_HASH_PREFIX_REGEX = /^\$2[aby]\$/;
@@ -526,7 +567,7 @@ export const requestSignupVerification = asyncHandler(async (req, res) => {
 });
 
 export const registerUser = asyncHandler(async (req, res) => {
-  const { username, name, email, password } = normalizeSignupPayload(req.body);
+  const { username, name, email, password, usernameWasProvided } = normalizeSignupPayload(req.body);
   const signupEmailConfigured = isMailConfigured();
   let verifiedSignupRecord = null;
 
@@ -558,18 +599,24 @@ export const registerUser = asyncHandler(async (req, res) => {
     }
   }
 
-  const existing = await User.findOne({
-    $or: [{ email }, { username }],
-  });
+  const existingEmailUser = await User.findOne({ email });
+  if (existingEmailUser) {
+    throw createError(409, "Email already exists");
+  }
 
-  if (existing) {
-    throw createError(409, "Email or username already exists");
+  const finalUsername = usernameWasProvided ? username : await resolveAvailableUsername(username);
+
+  if (usernameWasProvided) {
+    const existingUsernameUser = await User.findOne({ username: finalUsername });
+    if (existingUsernameUser) {
+      throw createError(409, "Username already exists");
+    }
   }
 
   let user;
   try {
     user = await User.create({
-      username,
+      username: finalUsername,
       name,
       email,
       password,
@@ -627,8 +674,10 @@ export const registerUser = asyncHandler(async (req, res) => {
 });
 
 export const loginUser = asyncHandler(async (req, res) => {
-  const { email, password } = normalizeLoginPayload(req.body);
-  const user = await User.findOne({ email });
+  const { email, username, password } = normalizeLoginPayload(req.body);
+  const user = await User.findOne({
+    $or: [{ email }, { username }],
+  });
   if (!user) {
     throw createError(404, "User does not exist");
   }
