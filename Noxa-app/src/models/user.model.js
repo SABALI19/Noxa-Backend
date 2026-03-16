@@ -1,6 +1,8 @@
 import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcrypt";
 
+const BCRYPT_HASH_PREFIX_REGEX = /^\$2[aby]\$/;
+
 const userSchema = new Schema(
   {
     username: {
@@ -112,7 +114,15 @@ userSchema.pre("save", async function savePassword() {
 });
 
 userSchema.methods.comparePassword = async function comparePassword(plainPassword) {
-  return bcrypt.compare(plainPassword, this.password);
+  const storedPassword = String(this.password || "");
+  const candidatePassword = String(plainPassword || "");
+
+  if (!BCRYPT_HASH_PREFIX_REGEX.test(storedPassword)) {
+    // Support legacy records that were stored before password hashing was enforced.
+    return storedPassword === candidatePassword;
+  }
+
+  return bcrypt.compare(candidatePassword, storedPassword);
 };
 
 userSchema.set("toJSON", {

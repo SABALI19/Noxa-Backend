@@ -60,18 +60,7 @@ const buildFeaturedWord = (entries) => {
     return DEFAULT_WORD;
   }
 
-  const todayKey = new Date().toISOString().slice(0, 10);
-  const previousDayKey = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  const todayHash = Array.from(todayKey).reduce((total, character) => total + character.charCodeAt(0), 0);
-  const previousHash = Array.from(previousDayKey).reduce((total, character) => total + character.charCodeAt(0), 0);
-
-  const previousIndex = previousHash % entries.length;
-  let selectedIndex = todayHash % entries.length;
-
-  if (entries.length > 1 && selectedIndex === previousIndex) {
-    selectedIndex = (selectedIndex + 1) % entries.length;
-  }
-
+  const selectedIndex = Math.floor(Math.random() * entries.length);
   return mapWordDocument(entries[selectedIndex]);
 };
 

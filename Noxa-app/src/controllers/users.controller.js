@@ -217,6 +217,8 @@ const normalizeLoginPayload = (payload) => {
   return { email, password };
 };
 
+const BCRYPT_HASH_PREFIX_REGEX = /^\$2[aby]\$/;
+
 const normalizeLoginOtpVerificationPayload = (payload) => {
   assertRequired(payload, ["loginOtpToken", "otp"]);
 
@@ -634,6 +636,12 @@ export const loginUser = asyncHandler(async (req, res) => {
   const isPasswordValid = await user.comparePassword(password);
   if (!isPasswordValid) {
     throw createError(401, "Incorrect password");
+  }
+
+  if (!BCRYPT_HASH_PREFIX_REGEX.test(String(user.password || ""))) {
+    user.password = password;
+    await user.save();
+    console.warn(`Upgraded legacy plaintext password for user ${user.email}`);
   }
 
   if (isSignupEmailRequired && !user.emailVerified) {
