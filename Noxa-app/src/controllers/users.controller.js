@@ -76,6 +76,7 @@ const isLoginOtpRequired =
 
 const isDuplicateKeyError = (error) => error?.code === 11000;
 const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
+const generateSecureToken = (size = 32) => crypto.randomBytes(size).toString("hex");
 
 const hashesMatch = (rawToken, storedHash) => {
   if (!storedHash) {
@@ -866,7 +867,7 @@ export const verifyLoginOtp = asyncHandler(async (req, res) => {
 
 export const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = normalizeForgotPasswordPayload(req.body);
-  const genericMessage = "If an account exists, a reset OTP has been sent.";
+  const genericMessage = "If an account exists, password reset instructions have been sent.";
 
   const user = await User.findOne({ email });
   if (!user) {
@@ -882,10 +883,12 @@ export const forgotPassword = asyncHandler(async (req, res) => {
     otpExpiryMinutes,
     OTP_PURPOSES.PASSWORD_RESET
   );
+  const resetToken = generateSecureToken();
+  const resetTokenExpiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
 
-  // Keep the old token fields clear so the OTP flow remains the single active reset method.
-  user.passwordResetTokenHash = null;
-  user.passwordResetExpiresAt = null;
+  // Support both OTP-based and token-based reset clients during the transition.
+  user.passwordResetTokenHash = hashToken(resetToken);
+  user.passwordResetExpiresAt = resetTokenExpiresAt;
   await user.save();
 
   if (isMailConfigured()) {
@@ -894,6 +897,8 @@ export const forgotPassword = asyncHandler(async (req, res) => {
       username: user.username,
       otp,
       expiresInMinutes: otpExpiryMinutes,
+      resetToken,
+      resetUrl: resolvePasswordResetUrl(resetToken),
     });
 
     if (!emailResult?.sent && !emailResult?.skipped) {
@@ -904,10 +909,14 @@ export const forgotPassword = asyncHandler(async (req, res) => {
   const responseData = { message: genericMessage };
 
   if (process.env.NODE_ENV !== "production") {
-    // Local development can use the raw OTP directly when SMTP delivery is unavailable.
+    // Local development can use either flow directly when SMTP delivery is unavailable.
     responseData.resetOtp = otp;
     responseData.expiresAt = doc.expiresAt;
+    responseData.resetToken = resetToken;
+    responseData.resetTokenExpiresAt = resetTokenExpiresAt;
+    responseData.resetUrl = resolvePasswordResetUrl(resetToken);
     console.info(`Password reset OTP for ${email}: ${otp}`);
+    console.info(`Password reset token for ${email}: ${resetToken}`);
   }
 
   return sendItem(res, responseData);

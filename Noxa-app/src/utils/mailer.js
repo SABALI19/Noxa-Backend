@@ -157,7 +157,14 @@ export const sendSignupVerificationEmail = async ({
   };
 };
 
-export const sendPasswordResetOtpEmail = async ({ to, username, otp, expiresInMinutes = 10 }) => {
+export const sendPasswordResetOtpEmail = async ({
+  to,
+  username,
+  otp,
+  expiresInMinutes = 10,
+  resetUrl = "",
+  resetToken = "",
+}) => {
   if (!isMailConfigured()) {
     return {
       sent: false,
@@ -170,6 +177,8 @@ export const sendPasswordResetOtpEmail = async ({ to, username, otp, expiresInMi
   const safeTo = String(to || "").trim().toLowerCase();
   const safeOtp = String(otp || "").trim();
   const safeExpiry = Number.isFinite(Number(expiresInMinutes)) ? Number(expiresInMinutes) : 10;
+  const safeResetUrl = String(resetUrl || "").trim();
+  const safeResetToken = String(resetToken || "").trim();
 
   if (!safeTo) {
     return {
@@ -191,7 +200,13 @@ export const sendPasswordResetOtpEmail = async ({ to, username, otp, expiresInMi
     from: fromAddress,
     to: safeTo,
     subject: "Noxa Password Reset OTP",
-    text: `Hi ${safeUsername}, your Noxa password reset OTP is ${safeOtp}. It expires in ${safeExpiry} minutes.`,
+    text: `Hi ${safeUsername}, your Noxa password reset OTP is ${safeOtp}. It expires in ${safeExpiry} minutes.${
+      safeResetUrl
+        ? ` You can also open this reset link: ${safeResetUrl}`
+        : safeResetToken
+          ? ` You can also use this reset token: ${safeResetToken}`
+          : ""
+    }`,
     html: `
       <div style="font-family: Arial, sans-serif; line-height: 1.5;">
         <h2>Password Reset OTP</h2>
@@ -199,6 +214,15 @@ export const sendPasswordResetOtpEmail = async ({ to, username, otp, expiresInMi
         <p>Use this OTP to reset your Noxa password:</p>
         <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${safeOtp}</p>
         <p>This OTP expires in ${safeExpiry} minutes.</p>
+        ${
+          safeResetUrl
+            ? `<p>You can also reset directly with this link:</p>
+        <p><a href="${safeResetUrl}">${safeResetUrl}</a></p>`
+            : safeResetToken
+              ? `<p>If your app asks for a reset token, use this token:</p>
+        <p style="font-family: monospace; font-size: 16px; word-break: break-all;">${safeResetToken}</p>`
+              : ""
+        }
         <p>If you did not request this, you can ignore this email.</p>
         <p>Regards,<br/>Noxa Team</p>
       </div>
