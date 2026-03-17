@@ -9,8 +9,32 @@ const DEFAULT_MAX_TOKENS = 1000;
 const MAX_CHAT_SESSIONS = 20;
 const MAX_MESSAGES_PER_SESSION = 200;
 const MAX_CONTENT_LENGTH = 20000;
+const BASE_SYSTEM_PROMPT = `You are Noxa, an AI productivity assistant inside a goals, tasks, reminders, and notes app.
+
+Your responses must feel specific, grounded, and useful, not generic.
+
+Core rules:
+- Use the user's actual workspace context and recent conversation when it is provided.
+- Refer to real item names, deadlines, priorities, progress, or constraints when relevant.
+- Give concrete next steps, prioritization, sequencing, or tradeoffs instead of broad productivity advice.
+- If something seems urgent, explain why using the provided context.
+- Avoid filler, cliches, empty encouragement, and vague summaries.
+- Do not invent missing facts. If context is incomplete, say what is missing briefly and still offer the best next step.
+- Keep answers concise but substantive.`;
 
 const isValidMessageRole = (role) => role === "user" || role === "assistant";
+
+const buildSystemPrompt = (system) => {
+  const callerPrompt = typeof system === "string" ? system.trim() : "";
+  if (!callerPrompt) {
+    return BASE_SYSTEM_PROMPT;
+  }
+
+  return `${BASE_SYSTEM_PROMPT}
+
+Additional caller instructions:
+${callerPrompt}`;
+};
 
 const validateMessages = (messages) => {
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -160,13 +184,14 @@ export const postAiMessage = asyncHandler(async (req, res) => {
   }
 
   const anthropic = new Anthropic({ apiKey });
+  const mergedSystemPrompt = buildSystemPrompt(system);
 
   try {
     const response = await anthropic.messages.create({
       model: model?.trim() || DEFAULT_MODEL,
       max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
       messages,
-      ...(system ? { system } : {}),
+      system: mergedSystemPrompt,
     });
 
     return res.status(200).json(response);
