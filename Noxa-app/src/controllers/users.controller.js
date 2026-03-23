@@ -29,7 +29,11 @@ import {
   removeUserPushSubscription,
   upsertUserPushSubscription,
 } from "../utils/webPush.js";
-import { isMailConfigured, sendSignupVerificationEmail } from "../utils/mailer.js";
+import {
+  isMailConfigured,
+  sendLoginOtpEmail,
+  sendSignupVerificationEmail,
+} from "../utils/mailer.js";
 import { emitNotification } from "../utils/emitNotification.js";
 import { createAndSaveOtp, generateNumericOtp, OTP_PURPOSES, verifyOtpForUser } from "../utils/otp.js";
 
@@ -65,7 +69,8 @@ const VERIFIED_SIGNUP_TOKEN_MINUTES = Number.parseInt(
 );
 const isSignupEmailRequired =
   String(process.env.SIGNUP_EMAIL_REQUIRED || "false").trim().toLowerCase() === "true";
-const isLoginOtpRequired = false; // String(process.env.LOGIN_OTP_REQUIRED || "false").trim().toLowerCase() === "true";
+const isLoginOtpRequired =
+  String(process.env.LOGIN_OTP_REQUIRED || "false").trim().toLowerCase() === "true";
 
 const isDuplicateKeyError = (error) => error?.code === 11000;
 const hashToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
@@ -693,40 +698,39 @@ export const loginUser = asyncHandler(async (req, res) => {
     throw createError(403, "Email not verified");
   }
 
-  // Login OTP email requirement removed - always return success directly
-  // if (isLoginOtpRequired) {
-  //   if (!isMailConfigured()) {
-  //     throw createError(503, "Login OTP email is not configured");
-  //   }
-  //
-  //   const otpExpiryMinutes =
-  //     Number.isFinite(LOGIN_OTP_MINUTES) && LOGIN_OTP_MINUTES > 0 ? LOGIN_OTP_MINUTES : 10;
-  //   const { otp, doc } = await createAndSaveOtp(user._id, otpExpiryMinutes, OTP_PURPOSES.LOGIN);
-  //   const emailResult = await sendLoginOtpEmail({
-  //     to: user.email,
-  //     username: user.username,
-  //     otp,
-  //     expiresInMinutes: otpExpiryMinutes,
-  //   });
-  //
-  //   if (!emailResult?.sent) {
-  //     throw createError(503, "Could not send login OTP. Please try again.");
-  //   }
-  //
-  //   const responseData = {
-  //     requiresOtp: true,
-  //     loginOtpToken: signLoginOtpToken(user._id.toString(), otpExpiryMinutes),
-  //     expiresAt: doc.expiresAt,
-  //     message: "Login OTP sent. Verify it to complete sign in.",
-  //   };
-  //
-  //   if (process.env.NODE_ENV !== "production") {
-  //     responseData.loginOtp = otp;
-  //     console.info(`Login OTP for ${email}: ${otp}`);
-  //   }
-  //
-  //   return sendItem(res, responseData);
-  // }
+  if (isLoginOtpRequired) {
+    if (!isMailConfigured()) {
+      throw createError(503, "Login OTP email is not configured");
+    }
+
+    const otpExpiryMinutes =
+      Number.isFinite(LOGIN_OTP_MINUTES) && LOGIN_OTP_MINUTES > 0 ? LOGIN_OTP_MINUTES : 10;
+    const { otp, doc } = await createAndSaveOtp(user._id, otpExpiryMinutes, OTP_PURPOSES.LOGIN);
+    const emailResult = await sendLoginOtpEmail({
+      to: user.email,
+      username: user.username,
+      otp,
+      expiresInMinutes: otpExpiryMinutes,
+    });
+
+    if (!emailResult?.sent) {
+      throw createError(503, "Could not send login OTP. Please try again.");
+    }
+
+    const responseData = {
+      requiresOtp: true,
+      loginOtpToken: signLoginOtpToken(user._id.toString(), otpExpiryMinutes),
+      expiresAt: doc.expiresAt,
+      message: "Login OTP sent. Verify it to complete sign in.",
+    };
+
+    if (process.env.NODE_ENV !== "production") {
+      responseData.loginOtp = otp;
+      console.info(`Login OTP for ${email}: ${otp}`);
+    }
+
+    return sendItem(res, responseData);
+  }
 
   return sendItem(res, await buildLoginSuccessResponse(req, user));
 });
