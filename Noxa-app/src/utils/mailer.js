@@ -56,6 +56,70 @@ const transporter = smtpConfig ? nodemailer.createTransport(smtpConfig) : null;
 
 export const isMailConfigured = () => Boolean(transporter && fromAddress);
 
+export const sendCustomEmail = async ({
+  to,
+  subject,
+  text = "",
+  html = "",
+  cc,
+  bcc,
+  replyTo,
+}) => {
+  if (!isMailConfigured()) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "mail_not_configured",
+    };
+  }
+
+  const safeTo = String(to || "").trim().toLowerCase();
+  const safeSubject = String(subject || "").trim();
+  const safeText = String(text || "").trim();
+  const safeHtml = String(html || "").trim();
+  const safeReplyTo = String(replyTo || "").trim();
+
+  if (!safeTo) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "missing_recipient",
+    };
+  }
+
+  if (!safeSubject) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "missing_subject",
+    };
+  }
+
+  if (!safeText && !safeHtml) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "missing_content",
+    };
+  }
+
+  await transporter.sendMail({
+    from: fromAddress,
+    to: safeTo,
+    cc: cc || undefined,
+    bcc: bcc || undefined,
+    replyTo: safeReplyTo || undefined,
+    subject: safeSubject,
+    text: safeText || undefined,
+    html: safeHtml || undefined,
+  });
+
+  return {
+    sent: true,
+    skipped: false,
+  };
+};
+
 export const sendAccountCreatedEmail = async ({ to, username }) => {
   if (!isMailConfigured()) {
     return {

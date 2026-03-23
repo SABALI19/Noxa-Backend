@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { createError, sendItem, sendList } from "../utils/http.js";
 import { assertEnum, assertNonNegativeNumber, assertObjectId } from "../utils/validation.js";
 import { emitNotification } from "../utils/emitNotification.js";
+import { buildTaskAssistantSuggestions } from "../utils/taskAssistant.js";
 import {
   NOTIFICATION_METHOD_VALUES,
   PRIORITY_VALUES,
@@ -127,6 +128,21 @@ const pickTaskUpdates = (payload) => {
   );
 };
 
+const serializeTaskResponse = async ({ action, task, previousTask = null, userId }) => {
+  const taskData = typeof task?.toObject === "function" ? task.toObject() : { ...task };
+  const assistantSuggestions = await buildTaskAssistantSuggestions({
+    action,
+    task: taskData,
+    previousTask,
+    userId,
+  });
+
+  return {
+    ...taskData,
+    assistantSuggestions,
+  };
+};
+
 export const createTask = asyncHandler(async (req, res) => {
   validateTaskPayload(req.body);
 
@@ -145,7 +161,11 @@ export const createTask = asyncHandler(async (req, res) => {
     },
   }, { userId: req.user.id });
 
-  return sendItem(res, task, 201);
+  return sendItem(
+    res,
+    await serializeTaskResponse({ action: "create", task, userId: req.user.id }),
+    201
+  );
 });
 
 export const getTasks = asyncHandler(async (req, res) => {
@@ -170,15 +190,14 @@ export const updateTask = asyncHandler(async (req, res) => {
   const updates = pickTaskUpdates(req.body);
   validateTaskPayload(updates, true);
 
-  const task = await Task.findOneAndUpdate(
-    { _id: req.params.id, userId: req.user.id },
-    { $set: updates },
-    { new: true, runValidators: true }
-  );
-
-  if (!task) {
+  const existingTask = await Task.findOne({ _id: req.params.id, userId: req.user.id });
+  if (!existingTask) {
     throw createError(404, "Task not found");
   }
+
+  const previousTask = existingTask.toObject();
+  Object.assign(existingTask, updates);
+  const task = await existingTask.save();
 
   emitNotification(
     req,
@@ -195,7 +214,15 @@ export const updateTask = asyncHandler(async (req, res) => {
     { userId: req.user.id }
   );
 
-  return sendItem(res, task);
+  return sendItem(
+    res,
+    await serializeTaskResponse({
+      action: "update",
+      task,
+      previousTask,
+      userId: req.user.id,
+    })
+  );
 });
 
 export const deleteTask = asyncHandler(async (req, res) => {
@@ -221,5 +248,8 @@ export const deleteTask = asyncHandler(async (req, res) => {
     { userId: req.user.id }
   );
 
-  return sendItem(res, task);
+  return sendItem(
+    res,
+    await serializeTaskResponse({ action: "delete", task, userId: req.user.id })
+  );
 });

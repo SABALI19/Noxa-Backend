@@ -4,6 +4,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { createError, sendItem, sendList } from "../utils/http.js";
 import { assertEnum, assertNonNegativeNumber, assertObjectId, assertRange } from "../utils/validation.js";
 import { emitNotification } from "../utils/emitNotification.js";
+import { buildGoalAssistantSuggestions } from "../utils/goalAssistant.js";
 
 const pickGoalUpdates = (payload) => {
   const allowedFields = [
@@ -90,6 +91,28 @@ const resolveGoalNotificationType = (beforeGoal, updates, afterGoal) => {
   return "goal_updated";
 };
 
+const serializeGoalResponse = async ({
+  action,
+  goal,
+  previousGoal = null,
+  updates = null,
+  userId,
+}) => {
+  const goalData = typeof goal?.toObject === "function" ? goal.toObject() : { ...goal };
+  const assistantSuggestions = await buildGoalAssistantSuggestions({
+    action,
+    goal: goalData,
+    previousGoal,
+    updates,
+    userId,
+  });
+
+  return {
+    ...goalData,
+    assistantSuggestions,
+  };
+};
+
 export const createGoal = asyncHandler(async (req, res) => {
   const payload = normalizeGoalCompletion(pickGoalUpdates(req.body));
   validateGoalPayload(payload);
@@ -115,7 +138,11 @@ export const createGoal = asyncHandler(async (req, res) => {
     { userId: req.user.id }
   );
 
-  return sendItem(res, goal, 201);
+  return sendItem(
+    res,
+    await serializeGoalResponse({ action: "create", goal, userId: req.user.id }),
+    201
+  );
 });
 
 export const getGoals = asyncHandler(async (req, res) => {
@@ -145,6 +172,8 @@ export const updateGoal = asyncHandler(async (req, res) => {
     throw createError(404, "Goal not found");
   }
 
+  const previousGoal = existingGoal.toObject();
+
   const goal = await Goal.findOneAndUpdate(
     { _id: req.params.id, userId: req.user.id },
     { $set: payload },
@@ -169,7 +198,16 @@ export const updateGoal = asyncHandler(async (req, res) => {
     { userId: req.user.id }
   );
 
-  return sendItem(res, goal);
+  return sendItem(
+    res,
+    await serializeGoalResponse({
+      action: "update",
+      goal,
+      previousGoal,
+      updates: payload,
+      userId: req.user.id,
+    })
+  );
 });
 
 export const deleteGoal = asyncHandler(async (req, res) => {
@@ -196,5 +234,8 @@ export const deleteGoal = asyncHandler(async (req, res) => {
     { userId: req.user.id }
   );
 
-  return sendItem(res, goal);
+  return sendItem(
+    res,
+    await serializeGoalResponse({ action: "delete", goal, userId: req.user.id })
+  );
 });

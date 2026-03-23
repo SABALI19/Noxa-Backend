@@ -5,6 +5,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { createError, sendItem, sendList } from "../utils/http.js";
 import { emitNotification } from "../utils/emitNotification.js";
 import { verifyPushReminderActionToken } from "../utils/token.js";
+import { buildReminderAssistantSuggestions } from "../utils/reminderAssistant.js";
 import {
   assertEnum,
   assertNonNegativeNumber,
@@ -102,6 +103,26 @@ const resolveReminderNotificationType = (beforeReminder, afterReminder) => {
   return "reminder_updated";
 };
 
+const serializeReminderResponse = async ({
+  action,
+  reminder,
+  previousReminder = null,
+  userId,
+}) => {
+  const reminderData = typeof reminder?.toObject === "function" ? reminder.toObject() : { ...reminder };
+  const assistantSuggestions = await buildReminderAssistantSuggestions({
+    action,
+    reminder: reminderData,
+    previousReminder,
+    userId,
+  });
+
+  return {
+    ...reminderData,
+    assistantSuggestions,
+  };
+};
+
 const applyReminderSnooze = async ({ userId, reminderId, snoozeMinutes, req }) => {
   assertObjectId(reminderId);
 
@@ -109,6 +130,8 @@ const applyReminderSnooze = async ({ userId, reminderId, snoozeMinutes, req }) =
   if (!reminder) {
     throw createError(404, "Reminder not found");
   }
+
+  const previousReminder = reminder.toObject();
 
   assertNonNegativeNumber(snoozeMinutes, "snoozeMinutes");
   if (snoozeMinutes <= 0) {
@@ -137,7 +160,7 @@ const applyReminderSnooze = async ({ userId, reminderId, snoozeMinutes, req }) =
     { userId }
   );
 
-  return reminder;
+  return { reminder, previousReminder };
 };
 
 export const createReminder = asyncHandler(async (req, res) => {
@@ -172,7 +195,11 @@ export const createReminder = asyncHandler(async (req, res) => {
     { userId: req.user.id }
   );
 
-  return sendItem(res, reminder, 201);
+  return sendItem(
+    res,
+    await serializeReminderResponse({ action: "create", reminder, userId: req.user.id }),
+    201
+  );
 });
 
 export const getReminders = asyncHandler(async (req, res) => {
@@ -199,6 +226,8 @@ export const updateReminder = asyncHandler(async (req, res) => {
     throw createError(404, "Reminder not found");
   }
 
+  const previousReminder = existingReminder.toObject();
+
   const reminder = await Reminder.findOneAndUpdate(
     { _id: req.params.id, userId: req.user.id },
     { $set: updates },
@@ -222,7 +251,15 @@ export const updateReminder = asyncHandler(async (req, res) => {
     { userId: req.user.id }
   );
 
-  return sendItem(res, reminder);
+  return sendItem(
+    res,
+    await serializeReminderResponse({
+      action: "update",
+      reminder,
+      previousReminder,
+      userId: req.user.id,
+    })
+  );
 });
 
 export const deleteReminder = asyncHandler(async (req, res) => {
@@ -252,19 +289,30 @@ export const deleteReminder = asyncHandler(async (req, res) => {
     { userId: req.user.id }
   );
 
-  return sendItem(res, reminder);
+  return sendItem(
+    res,
+    await serializeReminderResponse({ action: "delete", reminder, userId: req.user.id })
+  );
 });
 
 export const snoozeReminder = asyncHandler(async (req, res) => {
   const snoozeMinutes = req.body.snoozeMinutes ?? 10;
-  const reminder = await applyReminderSnooze({
+  const { reminder, previousReminder } = await applyReminderSnooze({
     userId: req.user.id,
     reminderId: req.params.id,
     snoozeMinutes,
     req,
   });
 
-  return sendItem(res, reminder);
+  return sendItem(
+    res,
+    await serializeReminderResponse({
+      action: "snooze",
+      reminder,
+      previousReminder,
+      userId: req.user.id,
+    })
+  );
 });
 
 export const snoozeReminderFromPushAction = asyncHandler(async (req, res) => {
@@ -285,12 +333,20 @@ export const snoozeReminderFromPushAction = asyncHandler(async (req, res) => {
   }
 
   const snoozeMinutes = req.body?.snoozeMinutes ?? 30;
-  const reminder = await applyReminderSnooze({
+  const { reminder, previousReminder } = await applyReminderSnooze({
     userId: String(payload.sub),
     reminderId: String(payload.rid),
     snoozeMinutes,
     req,
   });
 
-  return sendItem(res, reminder);
+  return sendItem(
+    res,
+    await serializeReminderResponse({
+      action: "snooze",
+      reminder,
+      previousReminder,
+      userId: String(payload.sub),
+    })
+  );
 });
