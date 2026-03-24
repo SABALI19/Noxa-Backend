@@ -1,0 +1,14 @@
+{
+  "watch": [
+    "Noxa-app/src",
+    ".env"
+  ],
+  "ext": "js,mjs,cjs,json",
+  "ignore": [
+    "node_modules/**",
+    ".git/**",
+    "dev.out.log",
+    "dev.err.log",
+    "*.log"
+  ]
+}
