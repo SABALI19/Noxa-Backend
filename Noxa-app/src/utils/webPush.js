@@ -107,15 +107,22 @@ const buildPushTemplate = (payload, userId) => {
     task_deleted: { title: "Task Deleted", body: `Deleted: ${itemTitle}` },
     goal_created: { title: "Goal Created", body: `Created: ${itemTitle}` },
     goal_completed: { title: "Goal Completed", body: `Completed: ${itemTitle}` },
+    goal_deleted: { title: "Goal Deleted", body: `Deleted: ${itemTitle}` },
+    goal_progress: { title: "Goal Progress Updated", body: `Progress updated: ${itemTitle}` },
+    goal_milestone: { title: "Goal Milestone Updated", body: `Milestones updated: ${itemTitle}` },
     goal_reminder: { title: "Goal Reminder", body: itemTitle },
     goal_updated: { title: "Goal Updated", body: `Updated: ${itemTitle}` },
     reminder_created: { title: "Reminder Set", body: `Reminder: ${itemTitle}` },
     reminder_triggered: { title: "Reminder Due", body: itemTitle },
+    reminder_completed: { title: "Reminder Completed", body: `Completed: ${itemTitle}` },
+    reminder_reopened: { title: "Reminder Reopened", body: `Reopened: ${itemTitle}` },
+    reminder_snoozed: { title: "Reminder Snoozed", body: `Snoozed: ${itemTitle}` },
     reminder_updated: { title: "Reminder Updated", body: `Updated: ${itemTitle}` },
     reminder_deleted: { title: "Reminder Deleted", body: `Deleted: ${itemTitle}` },
     note_created: { title: "Note Created", body: `Created: ${itemTitle}` },
     note_updated: { title: "Note Updated", body: `Updated: ${itemTitle}` },
     note_deleted: { title: "Note Deleted", body: `Deleted: ${itemTitle}` },
+    profile_updated: { title: "Profile Updated", body: "Your profile was updated successfully." },
   };
 
   const fallback = {
@@ -129,6 +136,12 @@ const buildPushTemplate = (payload, userId) => {
     }
     if (itemType === "goal" && itemId) {
       return `/goals/${encodeURIComponent(String(itemId))}`;
+    }
+    if (itemType === "note" && itemId) {
+      return `/notes#note-${encodeURIComponent(String(itemId))}`;
+    }
+    if (itemType === "profile" || itemType === "account") {
+      return "/settings";
     }
     if (type.startsWith("reminder_")) {
       return "/reminders";

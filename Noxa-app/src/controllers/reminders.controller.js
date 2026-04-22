@@ -6,6 +6,7 @@ import { createError, sendItem, sendList } from "../utils/http.js";
 import { emitNotification } from "../utils/emitNotification.js";
 import { verifyPushReminderActionToken } from "../utils/token.js";
 import { buildReminderAssistantSuggestions } from "../utils/reminderAssistant.js";
+import { isMailConfigured } from "../utils/mailer.js";
 import {
   assertEnum,
   assertNonNegativeNumber,
@@ -13,8 +14,8 @@ import {
   assertRequired,
 } from "../utils/validation.js";
 import {
-  NOTIFICATION_METHOD_VALUES,
   PRIORITY_VALUES,
+  REMINDER_NOTIFICATION_METHOD_VALUES,
   REMINDER_FREQUENCY_VALUES,
   REMINDER_STATUS_VALUES,
   TASK_CATEGORY_VALUES,
@@ -23,7 +24,8 @@ import {
 const normalizeNotificationMethod = (value, fallback = "in_app") => {
   const normalized = String(value || "").trim().toLowerCase();
   if (normalized === "app") return "in_app";
-  if (NOTIFICATION_METHOD_VALUES.includes(normalized)) return normalized;
+  if (normalized === "sms") return normalized;
+  if (REMINDER_NOTIFICATION_METHOD_VALUES.includes(normalized)) return normalized;
   return fallback;
 };
 
@@ -39,6 +41,22 @@ const normalizeReminderPayload = (payload = {}) => {
   };
 };
 
+const EMAIL_NOTIFICATION_METHODS = new Set(["email", "both"]);
+
+const validateReminderNotificationMethod = (notificationMethod, fieldName = "notificationMethod") => {
+  if (notificationMethod === undefined || notificationMethod === null || notificationMethod === "") {
+    return;
+  }
+
+  if (notificationMethod === "sms") {
+    throw createError(400, `${fieldName} does not support sms yet`);
+  }
+
+  if (EMAIL_NOTIFICATION_METHODS.has(notificationMethod) && !isMailConfigured()) {
+    throw createError(503, "Email reminders are not configured");
+  }
+};
+
 const validateReminderPayload = (payload, isPatch = false) => {
   if (!isPatch) {
     assertRequired(payload, ["title", "dueDate", "reminderTime"]);
@@ -48,7 +66,8 @@ const validateReminderPayload = (payload, isPatch = false) => {
   assertEnum("priority", payload.priority, PRIORITY_VALUES);
   assertEnum("category", payload.category, TASK_CATEGORY_VALUES);
   assertEnum("frequency", payload.frequency, REMINDER_FREQUENCY_VALUES);
-  assertEnum("notificationMethod", payload.notificationMethod, NOTIFICATION_METHOD_VALUES);
+  assertEnum("notificationMethod", payload.notificationMethod, REMINDER_NOTIFICATION_METHOD_VALUES);
+  validateReminderNotificationMethod(payload.notificationMethod);
 };
 
 const pickReminderUpdates = (payload) => {

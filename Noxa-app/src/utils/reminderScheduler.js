@@ -1,6 +1,9 @@
+import mongoose from "mongoose";
 import { Reminder } from "../models/reminder.model.js";
 import { Task } from "../models/task.model.js";
+import { User } from "../models/user.model.js";
 import { emitNotificationToUser } from "./emitNotification.js";
+import { sendReminderNotificationEmail } from "./mailer.js";
 
 const ENABLED_BY_DEFAULT = "true";
 const DEFAULT_INTERVAL_MS = 30000;
@@ -34,6 +37,11 @@ const normalizeNotificationMethod = (value, fallback = "in_app") => {
 const isAppPushMethod = (method) => {
   const normalized = normalizeNotificationMethod(method);
   return normalized === "push" || normalized === "in_app" || normalized === "both";
+};
+
+const shouldSendReminderEmail = (method) => {
+  const normalized = normalizeNotificationMethod(method);
+  return normalized === "email" || normalized === "both";
 };
 
 const shouldEnableReminderScheduler = () =>
@@ -119,6 +127,7 @@ const resolveReminderEventMeta = (reminder) => {
       id: String(reminder._id),
       title: reminder.title,
       status: reminder.status,
+      reminderId: String(reminder._id),
     },
     message: `Reminder due: ${reminder.title}`,
   };
@@ -242,6 +251,25 @@ const buildTaskReminderPayload = (task, scheduleTime) => ({
   },
 });
 
+const sendReminderEmailToUser = async (userId, payload) => {
+  const user = await User.findById(userId).select("email username name");
+  if (!user?.email) {
+    return;
+  }
+
+  const result = await sendReminderNotificationEmail({
+    to: user.email,
+    username: user.name || user.username,
+    payload,
+  });
+
+  if (result.sent || result.reason === "mail_not_configured") {
+    return;
+  }
+
+  console.warn(`Reminder email skipped for user ${userId}: ${result.reason || "unknown_reason"}`);
+};
+
 const triggerDueRemindersBatch = async (io, batchSize) => {
   const now = new Date();
   const dueReminders = await Reminder.find({
@@ -288,15 +316,19 @@ const triggerDueRemindersBatch = async (io, batchSize) => {
 
     processed += 1;
 
-    if (!isAppPushMethod(reminder.notificationMethod)) {
-      continue;
+    const payload = buildReminderTriggeredPayload(reminder);
+
+    if (isAppPushMethod(reminder.notificationMethod)) {
+      emitNotificationToUser({
+        io,
+        userId: reminder.userId,
+        payload,
+      });
     }
 
-    emitNotificationToUser({
-      io,
-      userId: reminder.userId,
-      payload: buildReminderTriggeredPayload(reminder),
-    });
+    if (shouldSendReminderEmail(reminder.notificationMethod)) {
+      await sendReminderEmailToUser(reminder.userId, payload);
+    }
   }
 
   return processed;
@@ -375,15 +407,19 @@ const triggerDueTaskRemindersBatch = async (io) => {
 
     processed += 1;
 
-    if (!isAppPushMethod(settings.notificationMethod)) {
-      continue;
+    const payload = buildTaskReminderPayload(updatedTask, latestDueSchedule);
+
+    if (isAppPushMethod(settings.notificationMethod)) {
+      emitNotificationToUser({
+        io,
+        userId: updatedTask.userId,
+        payload,
+      });
     }
 
-    emitNotificationToUser({
-      io,
-      userId: updatedTask.userId,
-      payload: buildTaskReminderPayload(updatedTask, latestDueSchedule),
-    });
+    if (shouldSendReminderEmail(settings.notificationMethod)) {
+      await sendReminderEmailToUser(updatedTask.userId, payload);
+    }
   }
 
   return processed;
@@ -401,10 +437,24 @@ export const startReminderScheduler = ({ io }) => {
   );
   const batchSize = parsePositiveInt(process.env.REMINDER_SCHEDULER_BATCH_SIZE, DEFAULT_BATCH_SIZE);
   let isRunning = false;
+  let hasLoggedDisconnectedState = false;
 
   const runOnce = async () => {
     if (isRunning) {
       return;
+    }
+
+    if (mongoose.connection.readyState !== 1) {
+      if (!hasLoggedDisconnectedState) {
+        console.warn("Reminder scheduler skipped because MongoDB is disconnected");
+        hasLoggedDisconnectedState = true;
+      }
+      return;
+    }
+
+    if (hasLoggedDisconnectedState) {
+      console.info("Reminder scheduler resumed after MongoDB reconnected");
+      hasLoggedDisconnectedState = false;
     }
 
     isRunning = true;

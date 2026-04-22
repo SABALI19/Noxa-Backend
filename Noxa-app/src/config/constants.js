@@ -26,8 +26,9 @@ export const TASK_STATUS_VALUES = ["pending", "in_progress", "completed", "cance
 export const TASK_RECURRENCE_VALUES = ["none", "daily", "weekly", "monthly", "yearly"];
 
 export const NOTIFICATION_METHOD_VALUES = ["push", "email", "sms", "in_app", "app", "both"];
+export const REMINDER_NOTIFICATION_METHOD_VALUES = ["push", "email", "in_app", "app", "both"];
 
-export const REMINDER_STATUS_VALUES = ["pending", "sent", "dismissed", "snoozed"];
+export const REMINDER_STATUS_VALUES = ["pending", "sent", "dismissed", "snoozed", "completed"];
 
 export const REMINDER_FREQUENCY_VALUES = ["once", "daily", "weekly", "monthly"];
 

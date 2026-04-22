@@ -1,8 +1,8 @@
 import mongoose, { Schema } from "mongoose";
 import {
-  NOTIFICATION_METHOD_VALUES,
   PRIORITY_VALUES,
   REMINDER_FREQUENCY_VALUES,
+  REMINDER_NOTIFICATION_METHOD_VALUES,
   REMINDER_STATUS_VALUES,
   TASK_CATEGORY_VALUES,
 } from "../config/constants.js";
@@ -52,7 +52,7 @@ const reminderSchema = new Schema(
     },
     notificationMethod: {
       type: String,
-      enum: NOTIFICATION_METHOD_VALUES,
+      enum: REMINDER_NOTIFICATION_METHOD_VALUES,
       default: "in_app",
     },
     note: {

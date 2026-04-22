@@ -1,7 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 import {
-  NOTIFICATION_METHOD_VALUES,
   PRIORITY_VALUES,
+  REMINDER_NOTIFICATION_METHOD_VALUES,
   TASK_CATEGORY_VALUES,
   TASK_REMINDER_FREQUENCY_VALUES,
   TASK_REMINDER_TIMING_VALUES,
@@ -68,7 +68,7 @@ const taskSchema = new Schema(
       },
       notificationMethod: {
         type: String,
-        enum: NOTIFICATION_METHOD_VALUES,
+        enum: REMINDER_NOTIFICATION_METHOD_VALUES,
         default: "in_app",
       },
       timeBeforeMinutes: {
@@ -78,7 +78,7 @@ const taskSchema = new Schema(
       },
       method: {
         type: String,
-        enum: NOTIFICATION_METHOD_VALUES,
+        enum: REMINDER_NOTIFICATION_METHOD_VALUES,
         default: "in_app",
       },
       lastTriggeredAt: {

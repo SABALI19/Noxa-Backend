@@ -54,6 +54,65 @@ const smtpConfig = getSmtpConfig();
 const fromAddress = getFromAddress();
 const transporter = smtpConfig ? nodemailer.createTransport(smtpConfig) : null;
 
+const escapeHtml = (value) =>
+  String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const buildReminderEmailTemplate = (payload, username) => {
+  const itemTitle = String(payload?.item?.title || "Activity update").trim() || "Activity update";
+  const notificationType = String(payload?.notificationType || "notification").trim();
+  const safeUsername = String(username || "there").trim() || "there";
+
+  const templates = {
+    task_reminder: {
+      subject: `Task reminder: ${itemTitle}`,
+      heading: "Task Reminder",
+      intro: `Your task "${itemTitle}" is due for attention.`,
+    },
+    goal_reminder: {
+      subject: `Goal reminder: ${itemTitle}`,
+      heading: "Goal Reminder",
+      intro: `Your goal "${itemTitle}" just came up.`,
+    },
+    reminder_triggered: {
+      subject: `Reminder due: ${itemTitle}`,
+      heading: "Reminder Due",
+      intro: `Your reminder "${itemTitle}" is due now.`,
+    },
+  };
+
+  const fallback = {
+    subject: `Noxa update: ${itemTitle}`,
+    heading: "Noxa Update",
+    intro: String(payload?.message || itemTitle || "You have a new update.").trim(),
+  };
+
+  const template = templates[notificationType] || fallback;
+  const safeHeading = escapeHtml(template.heading);
+  const safeIntro = escapeHtml(template.intro);
+  const safeItemTitle = escapeHtml(itemTitle);
+  const safeMessage = escapeHtml(String(payload?.message || "").trim());
+
+  return {
+    subject: template.subject,
+    text: `Hi ${safeUsername}, ${template.intro}${safeMessage ? ` ${safeMessage}` : ""}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <h2>${safeHeading}</h2>
+        <p>Hi ${escapeHtml(safeUsername)},</p>
+        <p>${safeIntro}</p>
+        <p><strong>${safeItemTitle}</strong></p>
+        ${safeMessage ? `<p>${safeMessage}</p>` : ""}
+        <p>Regards,<br/>Noxa Team</p>
+      </div>
+    `,
+  };
+};
+
 export const isMailConfigured = () => Boolean(transporter && fromAddress);
 
 export const sendCustomEmail = async ({
@@ -351,4 +410,24 @@ export const sendLoginOtpEmail = async ({ to, username, otp, expiresInMinutes = 
     sent: true,
     skipped: false,
   };
+};
+
+export const sendReminderNotificationEmail = async ({ to, username, payload }) => {
+  const safeTo = String(to || "").trim().toLowerCase();
+  if (!safeTo) {
+    return {
+      sent: false,
+      skipped: true,
+      reason: "missing_recipient",
+    };
+  }
+
+  const { subject, text, html } = buildReminderEmailTemplate(payload, username);
+
+  return sendCustomEmail({
+    to: safeTo,
+    subject,
+    text,
+    html,
+  });
 };

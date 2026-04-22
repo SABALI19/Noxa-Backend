@@ -3,10 +3,11 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { createError, sendItem, sendList } from "../utils/http.js";
 import { assertEnum, assertNonNegativeNumber, assertObjectId } from "../utils/validation.js";
 import { emitNotification } from "../utils/emitNotification.js";
+import { isMailConfigured } from "../utils/mailer.js";
 import { buildTaskAssistantSuggestions } from "../utils/taskAssistant.js";
 import {
-  NOTIFICATION_METHOD_VALUES,
   PRIORITY_VALUES,
+  REMINDER_NOTIFICATION_METHOD_VALUES,
   TASK_CATEGORY_VALUES,
   TASK_REMINDER_FREQUENCY_VALUES,
   TASK_REMINDER_TIMING_VALUES,
@@ -23,10 +24,13 @@ const TASK_REMINDER_TIMING_TO_MINUTES = {
   on_due_date: 0,
 };
 
+const EMAIL_NOTIFICATION_METHODS = new Set(["email", "both"]);
+
 const normalizeNotificationMethod = (value, fallback = "in_app") => {
   const normalized = String(value || "").trim().toLowerCase();
   if (normalized === "app") return "in_app";
-  if (NOTIFICATION_METHOD_VALUES.includes(normalized)) return normalized;
+  if (normalized === "sms") return normalized;
+  if (REMINDER_NOTIFICATION_METHOD_VALUES.includes(normalized)) return normalized;
   return fallback;
 };
 
@@ -71,6 +75,40 @@ const normalizeTaskReminderSettings = (settings = {}) => {
   };
 };
 
+const validateTaskReminderRequirements = (payload, existingTask = null) => {
+  const effectiveDueDate = payload.dueDate !== undefined ? payload.dueDate : existingTask?.dueDate;
+  const isReminderSettingsUpdate = payload.reminderSettings !== undefined;
+  const effectiveReminderSettings =
+    isReminderSettingsUpdate
+      ? payload.reminderSettings
+      : existingTask?.reminderSettings
+        ? normalizeTaskReminderSettings(existingTask.reminderSettings)
+        : null;
+
+  if (!effectiveReminderSettings?.enabled) {
+    return;
+  }
+
+  if (!effectiveDueDate) {
+    throw createError(400, "dueDate is required when reminderSettings.enabled is true");
+  }
+
+  if (!isReminderSettingsUpdate) {
+    return;
+  }
+
+  if (effectiveReminderSettings.notificationMethod === "sms") {
+    throw createError(400, "reminderSettings.notificationMethod does not support sms yet");
+  }
+
+  if (
+    EMAIL_NOTIFICATION_METHODS.has(effectiveReminderSettings.notificationMethod) &&
+    !isMailConfigured()
+  ) {
+    throw createError(503, "Email reminders are not configured");
+  }
+};
+
 const validateTaskPayload = (payload, isPatch = false) => {
   if (!isPatch && !payload.title) {
     throw createError(400, "title is required");
@@ -91,7 +129,7 @@ const validateTaskPayload = (payload, isPatch = false) => {
     assertEnum(
       "reminderSettings.notificationMethod",
       payload.reminderSettings.notificationMethod,
-      NOTIFICATION_METHOD_VALUES
+      REMINDER_NOTIFICATION_METHOD_VALUES
     );
     assertEnum(
       "reminderSettings.frequency",
@@ -145,6 +183,7 @@ const serializeTaskResponse = async ({ action, task, previousTask = null, userId
 
 export const createTask = asyncHandler(async (req, res) => {
   validateTaskPayload(req.body);
+  validateTaskReminderRequirements(req.body);
 
   const task = await Task.create({
     ...pickTaskUpdates(req.body),
@@ -194,6 +233,8 @@ export const updateTask = asyncHandler(async (req, res) => {
   if (!existingTask) {
     throw createError(404, "Task not found");
   }
+
+  validateTaskReminderRequirements(updates, existingTask);
 
   const previousTask = existingTask.toObject();
   Object.assign(existingTask, updates);
